@@ -99,8 +99,8 @@ Your application will be available at:
 
 **macOS Users:** Download the ready-to-use desktop app directly!
 
-- **Apple Silicon (M1/M2/M3):** [Download Claudable-0.1.0-arm64.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0-arm64.dmg)
-- **Intel Mac:** [Download Claudable-0.1.0.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0.dmg)
+- **Apple Silicon (M1/M2/M3):** [Download Claudable-0.1.0-arm64.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0-arm64.dmg) (292MB)
+- **Intel Mac:** [Download Claudable-0.1.0.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0.dmg) (297MB)
 
 **Installation:**
 1. Download the DMG file for your Mac type

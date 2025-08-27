@@ -95,6 +95,21 @@ Your application will be available at:
 
 ## Desktop App (Electron)
 
+### Download Pre-built App
+
+**macOS Users:** Download the ready-to-use desktop app directly!
+
+- **Apple Silicon (M1/M2/M3):** [Download Claudable-0.1.0-arm64.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0-arm64.dmg)
+- **Intel Mac:** [Download Claudable-0.1.0.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0.dmg)
+
+**Installation:**
+1. Download the DMG file for your Mac type
+2. Open the DMG file
+3. Drag Claudable to your Applications folder
+4. Launch Claudable from Applications or Launchpad
+
+### Build From Source
+
 Build and distribute a desktop app that bundles the web UI and runs the local API automatically.
 
 ```bash

@@ -93,6 +93,25 @@ Your application will be available at:
 
 **Note**: Ports are automatically detected. If the default ports are in use, the next available ports will be assigned.
 
+## Desktop App (Electron)
+
+Build and distribute a desktop app that bundles the web UI and runs the local API automatically.
+
+```bash
+# Build production Next.js and package Electron app
+npm run build:desktop
+
+# Output installers
+# - macOS: apps/desktop/dist/*.dmg
+# - Windows: apps/desktop/dist/*.exe
+# - Linux: apps/desktop/dist/*.AppImage
+```
+
+Notes:
+- First launch will set up a Python virtual environment in your user data folder and install API dependencies (internet required). Subsequent launches are fast and offline.
+- The desktop app serves the UI at http://localhost:8080 and proxies /api/* to the local Python API.
+- If port 8080 is in use, close the conflicting app before launching the desktop app.
+
 ## Setup
 
 ### Manual Setup

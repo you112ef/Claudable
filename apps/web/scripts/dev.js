@@ -28,8 +28,14 @@ const openBrowserOnce = () => {
   }, 4000); // 4 second delay to ensure server is ready
 };
 
-// Start Next.js dev server
-const next = spawn('npx', ['next', 'dev', '--turbo'], {
+// Start Next.js dev server (honor WEB_PORT/PORT if provided)
+const port = process.env.WEB_PORT || process.env.PORT;
+const args = ['next', 'dev', '--turbo'];
+if (port) {
+  args.push('--port', String(port));
+}
+
+const next = spawn('npx', args, {
   stdio: 'inherit',
   shell: true
 });

@@ -22,6 +22,11 @@
     "electronVersion": "30.0.0",
     "appId": "ai.opactor.claudable",
     "productName": "Claudable",
+    "copyright": "Copyright © 2025 OPACTOR",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "main.js",
       "preload.js",
@@ -30,23 +35,63 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "../web", "to": "web", "filter": ["**/*", "!node_modules/**", "!.next/cache/**"] },
+      { 
+        "from": "../web", 
+        "to": "web", 
+        "filter": ["**/*", "!.next/cache/**"]
+      },
       { "from": "../api", "to": "api", "filter": ["**/*", "!.venv/**", "!**/__pycache__/**"] },
       { "from": "../../assets", "to": "assets" }
     ],
-    "asarUnpack": [
-      "web/.next/**"
-    ],
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ],
       "category": "public.app-category.developer-tools",
+      "icon": "../../assets/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "identity": null
     },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis", "zip"],
+      "icon": "../../assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
-      "target": ["AppImage"]
+      "target": ["AppImage", "deb", "rpm"],
+      "category": "Development",
+      "icon": "../../assets"
     }
   }
 }

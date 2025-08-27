@@ -13,7 +13,7 @@ const apiPort = process.env.API_PORT || 8080;
 async function main() {
   const resources = [
     `http://localhost:${webPort}`,
-    `http://localhost:${apiPort}/health`
+    `http-get://localhost:${apiPort}/health`
   ];
 
   try {
@@ -23,8 +23,8 @@ async function main() {
       interval: 250,
       strictSSL: false,
       validateStatus: function (status) {
-        // Consider any 2xx/3xx as ready
-        return status >= 200 && status < 400;
+        // Consider any 2xx/3xx/4xx as ready (API returns 405 for HEAD)
+        return status >= 200 && status < 500;
       }
     });
     process.exit(0);

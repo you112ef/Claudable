@@ -20,7 +20,11 @@ async function startWebServer({ webDir, webPort = 8080, apiPort }) {
       target: apiTarget,
       changeOrigin: true,
       ws: true,
-      logLevel: 'warn'
+      logLevel: 'warn',
+      onError: (err, req, res) => {
+        console.error('[Proxy Error]', err.message);
+        res.status(502).json({ error: 'API server not available' });
+      }
     });
     app.use('/api', apiProxy);
   } else {

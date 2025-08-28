@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const { spawnSync } = require('child_process');
 
 const rootDir = path.join(__dirname, '..');
 const envFile = path.join(rootDir, '.env');
@@ -44,22 +45,28 @@ async function setupEnvironment() {
       fs.mkdirSync(dataDir, { recursive: true });
       console.log('  Created data directory');
     }
-    
-    // Find available ports
-    const apiPort = await findAvailablePort(DEFAULT_API_PORT);
-    const webPort = await findAvailablePort(DEFAULT_WEB_PORT);
-    
-    if (apiPort !== DEFAULT_API_PORT) {
-      console.log(`  API port ${DEFAULT_API_PORT} is busy, using ${apiPort}`);
-    } else {
-      console.log(`  API port: ${apiPort}`);
+    // Fresh dev DB: remove legacy SQLite if present (unless KEEP_DB=1)
+    const dbFile = path.join(dataDir, 'cc.db');
+    const keepDb = process.env.KEEP_DB === '1' || process.env.CC_KEEP_DB === '1';
+    if (fs.existsSync(dbFile) && !keepDb) {
+      try {
+        fs.unlinkSync(dbFile);
+        console.log('  Removed existing SQLite database for a fresh dev setup');
+      } catch (e) {
+        console.warn('  Warning: could not delete existing database:', e.message);
+      }
     }
     
+    // Find available web port; API uses same port in Next.js fullstack
+    const webPort = await findAvailablePort(DEFAULT_WEB_PORT);
+    const apiPort = webPort;
+
     if (webPort !== DEFAULT_WEB_PORT) {
       console.log(`  Web port ${DEFAULT_WEB_PORT} is busy, using ${webPort}`);
     } else {
       console.log(`  Web port: ${webPort}`);
     }
+    console.log(`  API port (Next.js fullstack): ${apiPort}`);
     
     // Create root .env file
     const envContent = `# Auto-generated environment configuration
@@ -71,27 +78,72 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
     fs.writeFileSync(envFile, envContent);
     console.log(`  Created .env`);
     
-    // Create web .env.local file for Next.js fullstack (only if it doesn't exist)
-    if (!fs.existsSync(webEnvFile)) {
-      const webEnvContent = `# Auto-generated environment configuration
+    // Create or normalize web .env.local for Next.js fullstack
+    const desiredWebEnv = `# Auto-generated environment configuration
 # Using relative URLs for Next.js API routes
 NEXT_PUBLIC_API_BASE=
 NEXT_PUBLIC_WS_BASE=
 `;
-      
-      fs.writeFileSync(webEnvFile, webEnvContent);
+
+    if (!fs.existsSync(webEnvFile)) {
+      fs.writeFileSync(webEnvFile, desiredWebEnv);
       console.log(`  Created apps/web/.env.local`);
     } else {
-      console.log(`  apps/web/.env.local already exists, skipping`);
+      try {
+        const current = fs.readFileSync(webEnvFile, 'utf8');
+        // If it still points to :8080 or has non-empty endpoints, normalize to same-origin
+        const hasExternal = /NEXT_PUBLIC_API_BASE\s*=\s*http/i.test(current) || /NEXT_PUBLIC_WS_BASE\s*=\s*ws/i.test(current);
+        const has8080 = /8080/.test(current);
+        if (hasExternal || has8080) {
+          fs.writeFileSync(webEnvFile, desiredWebEnv);
+          console.log('  Normalized apps/web/.env.local for Next.js same-origin API');
+        } else {
+          console.log('  apps/web/.env.local present; keeping existing values');
+        }
+      } catch (e) {
+        console.warn('  Warning: could not read apps/web/.env.local, leaving as-is');
+      }
     }
     
     console.log('  Environment setup complete!');
-    
-    if (apiPort !== DEFAULT_API_PORT || webPort !== DEFAULT_WEB_PORT) {
-      console.log('\n  Note: Using non-default ports');
-      console.log(`     API: http://localhost:${apiPort}`);
-      console.log(`     Web: http://localhost:${webPort}`);
+    // Ensure Prisma Client and database schema (dev convenience)
+    const webDir = path.join(rootDir, 'apps', 'web');
+    try {
+      const gen = spawnSync('npx', ['prisma', 'generate'], {
+        cwd: webDir,
+        stdio: 'pipe',
+        encoding: 'utf-8'
+      });
+      if (gen.status === 0) {
+        console.log('  Prisma client generated');
+      } else {
+        console.log('  prisma generate failed (non-critical):');
+        console.log(gen.stdout || gen.stderr);
+      }
+
+      const push = spawnSync('npx', ['prisma', 'db', 'push'], {
+        cwd: webDir,
+        stdio: 'pipe',
+        encoding: 'utf-8'
+      });
+      if (push.status === 0) {
+        console.log('  Prisma schema pushed to SQLite database');
+      } else {
+        console.log('  prisma db push failed, forcing clean push (dev only)...');
+        const reset = spawnSync('npx', ['prisma', 'db', 'push', '--force-reset', '--accept-data-loss'], {
+          cwd: webDir,
+          stdio: 'inherit'
+        });
+        if (reset.status === 0) {
+          console.log('  Prisma schema force-reset applied');
+        }
+      }
+    } catch (e) {
+      console.log('  Warning: prisma setup failed or not available; continuing');
     }
+
+    console.log('\n  Endpoints');
+    console.log(`     Web + API: http://localhost:${webPort}`);
     
     // Return ports for use in other scripts
     return { apiPort, webPort };

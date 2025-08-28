@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { successResponse, errorResponse } from '@/lib/api-response'
 import { handleCors } from '@/lib/cors'
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 import crypto from 'crypto'
 
 interface TokenCreate {

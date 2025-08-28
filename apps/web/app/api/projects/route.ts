@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Initialize session if initial_prompt provided
+    // Initialize session if initial_prompt provided (message hidden from UI; ACT/CHAT will stream separately)
     if (initial_prompt) {
       const session = await prisma.session.create({
         data: {
@@ -121,14 +121,14 @@ export async function POST(request: NextRequest) {
         }
       })
 
-      // Create initial message
       await prisma.message.create({
         data: {
           sessionId: session.id,
           projectId: project.id,
           role: 'user',
           content: initial_prompt,
-          type: 'initial_prompt'
+          type: 'initial_prompt',
+          metadata: JSON.stringify({ hidden_from_ui: true })
         }
       })
     }
@@ -152,3 +152,6 @@ export async function POST(request: NextRequest) {
     return errorResponse(error.message || 'Failed to create project', 500)
   }
 }
+// Ensure Node.js runtime (required for fs/prisma)
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'

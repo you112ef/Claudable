@@ -171,9 +171,12 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       }
       
       setMessages(prev => {
-        const exists = prev.some(msg => msg.id === chatMessage.id);
-        if (exists) {
-          return prev;
+        const idx = prev.findIndex(msg => msg.id === chatMessage.id);
+        if (idx !== -1) {
+          // Update existing message content (streaming)
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], ...chatMessage };
+          return updated;
         }
         return [...prev, chatMessage];
       });

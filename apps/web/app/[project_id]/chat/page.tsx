@@ -151,7 +151,7 @@ export default function ChatPage({ params }: Params) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
   const [folderContents, setFolderContents] = useState<Map<string, Entry[]>>(new Map());
   const [prompt, setPrompt] = useState('');
-  const [mode, setMode] = useState<'act' | 'chat'>('act');
+  const [mode, setMode] = useState<'act' | 'chat'>('chat');
   const [isRunning, setIsRunning] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [deviceMode, setDeviceMode] = useState<'desktop'|'mobile'>('desktop');
@@ -966,7 +966,27 @@ export default function ChatPage({ params }: Params) {
         console.error('❌ API Error:', errorText);
         setInitialPromptSent(false); // 실패하면 다시 시도할 수 있도록
         return;
+  }
+
+  // Send a plain chat message to streaming endpoint
+  async function sendChatMessage(message: string) {
+    const content = (message || '').trim();
+    if (!content) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/${projectId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, role: 'user', type: 'text' })
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Failed to send chat message:', res.status, errText);
       }
+      // Streaming will arrive via WebSocket: processing_started → message_chunk → message_complete
+    } catch (e) {
+      console.error('Failed to send chat message:', e);
+    }
+  }
       
       const result = await r.json();
       
@@ -1265,7 +1285,11 @@ export default function ChatPage({ params }: Params) {
             <div className="p-4 rounded-bl-2xl">
               <ChatInput 
                 onSendMessage={(message) => {
-                  runAct(message);
+                  if (mode === 'chat') {
+                    sendChatMessage(message);
+                  } else {
+                    runAct(message);
+                  }
                 }}
                 disabled={isRunning}
                 placeholder={mode === 'act' ? "Ask Claudable..." : "Chat with Claudable..."}

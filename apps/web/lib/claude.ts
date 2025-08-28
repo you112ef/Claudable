@@ -173,9 +173,21 @@ export class ClaudeService {
       }
 
       onComplete(fullResponse, usage)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error generating streaming Claude response:', error)
-      onError(new Error(`Claude API streaming error: ${error.message}`))
+      const msg = error?.message || ''
+      // Dev fallback: if API key not configured, stream a helpful message so UI completes gracefully
+      if (/API key not configured/i.test(msg) || /Missing required.*api key/i.test(msg)) {
+        const fallback = 'Claude API key is not configured. Open Settings → Tokens and add your ANTHROPIC_API_KEY to enable real streaming.'
+        // stream small chunks
+        const chunks = fallback.match(/.{1,40}/g) || [fallback]
+        for (const c of chunks) {
+          onChunk(c)
+        }
+        onComplete(fallback, { input_tokens: 0, output_tokens: fallback.length / 4 })
+        return
+      }
+      onError(new Error(`Claude API streaming error: ${msg}`))
     }
   }
 

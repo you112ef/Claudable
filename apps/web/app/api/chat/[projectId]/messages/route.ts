@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { successResponse, errorResponse } from '@/lib/api-response'
 import { handleCors } from '@/lib/cors'
-import { claudeService } from '@/lib/claude'
+import { spawn } from 'child_process'
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 interface RouteParams {
   params: {
@@ -43,16 +45,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const formattedMessages = messages.map(msg => ({
       id: msg.id,
-      request_id: msg.requestId,
+      request_id: msg.requestId || undefined,
       project_id: msg.projectId,
-      session_id: msg.sessionId,
+      session_id: msg.sessionId || undefined,
       content: msg.content,
       role: msg.role,
-      type: msg.type,
-      status: msg.status,
-      error_message: msg.errorMessage,
-      parent_message_id: msg.parentMessageId,
-      metadata: msg.metadata ? JSON.parse(msg.metadata) : null,
+      message_type: msg.type, // align with UI expectation
+      status: msg.status || undefined,
+      error_message: msg.errorMessage || undefined,
+      parent_message_id: msg.parentMessageId || undefined,
+      metadata_json: msg.metadata ? JSON.parse(msg.metadata) : null, // align with UI key
       created_at: msg.createdAt,
       updated_at: msg.updatedAt,
       user_request: msg.userRequest ? {
@@ -217,135 +219,72 @@ async function processAIResponse(projectId: string, sessionId: string, requestId
     let totalInputTokens = 0
     let totalOutputTokens = 0
 
-    // Use streaming response for real-time updates
-    await claudeService.generateStreamingResponse(
-      projectId,
-      sessionId,
-      userMessage,
-      // onChunk - stream partial responses via WebSocket
-      (chunk: string) => {
-        fullResponse += chunk
-        
-        if (global.io) {
-          global.io.to(projectId).emit('message_chunk', {
-            type: 'message_chunk',
-            data: {
-              message_id: aiMessage.id,
-              chunk,
-              content: fullResponse
+    // Use Python runner for real-time updates (align with main logic)
+    const project = await prisma.project.findUnique({ where: { id: projectId }, select: { cliType: true, cliModel: true } })
+    const cli: 'claude' | 'cursor' = (project?.cliType as any) === 'cursor' ? 'cursor' : 'claude'
+    const model = project?.cliModel || undefined
+    const candidates = [
+      path.join(process.cwd(), 'py_runner', 'cli_stream.py'),
+      path.join(process.cwd(), 'apps', 'web', 'py_runner', 'cli_stream.py')
+    ]
+    const runnerPath = candidates.find(p => fs.existsSync(p)) || candidates[0]
+    const pyArgs = [runnerPath, '--cli', cli, '--instruction', userMessage]
+    if (model) pyArgs.push('--model', model)
+    console.log('[CLI][messages] Spawning python runner', { runnerPath, cli, model, cwd: process.cwd(), PATH: process.env.PATH?.split(':').slice(0,3) })
+    const py = require('child_process').spawn('python3', pyArgs, { shell: false, env: process.env })
+
+    await new Promise<void>((resolve) => {
+      let buffer = ''
+      py.stdout.on('data', async (data: Buffer) => {
+        buffer += data.toString()
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          const s = line.trim()
+          if (!s) continue
+          try {
+            const obj = JSON.parse(s)
+            if (obj.type === 'chunk' && obj.data) {
+              const txt = obj.data.text || ''
+              fullResponse = obj.data.content || (fullResponse + txt)
+              if (global.io) global.io.to(projectId).emit('message_chunk', { type: 'message_chunk', data: { message_id: aiMessage.id, chunk: txt, content: fullResponse } })
+            } else if (obj.type === 'complete') {
+              fullResponse = obj.data?.text || fullResponse
+            } else if (obj.type === 'error') {
+              const errMsg = obj.message || 'CLI error'
+              await prisma.message.update({ where: { id: aiMessage.id }, data: { content: errMsg, status: 'error', errorMessage: errMsg } })
+              if (global.io) {
+                global.io.to(projectId).emit('processing_error', { type: 'processing_error', data: { request_id: requestId, message_id: aiMessage.id, error: errMsg } })
+                global.io.to(projectId).emit('message_complete', { type: 'message_complete', data: { message_id: aiMessage.id, request_id: requestId, content: errMsg, status: 'error' } })
+              }
             }
-          })
+          } catch {
+            fullResponse += s + '\n'
+            if (global.io) global.io.to(projectId).emit('message_chunk', { type: 'message_chunk', data: { message_id: aiMessage.id, chunk: s + '\n', content: fullResponse } })
+          }
         }
-      },
-      // onComplete - finalize the response
-      async (finalResponse: string, usage?: any) => {
+      })
+      py.stderr.on('data', (d: Buffer) => {
+        const s = d.toString()
+        if (s && s.trim()) console.log('[CLI][messages][stderr]', s.slice(0, 400))
+      })
+      py.on('error', (err: Error) => {
+        console.error('[CLI][messages] python spawn error:', err)
+      })
+      py.on('close', async (code: number) => {
+        console.log('[CLI][messages] runner closed with code', code)
         const endTime = Date.now()
         const duration = endTime - startTime
-
-        if (usage) {
-          totalInputTokens = usage.input_tokens || 0
-          totalOutputTokens = usage.output_tokens || 0
-        }
-
-        // Update the AI message with final content
-        await prisma.message.update({
-          where: { id: aiMessage.id },
-          data: { 
-            content: finalResponse,
-            status: 'completed'
-          }
-        })
-
-        // Update session token usage
-        await prisma.session.update({
-          where: { id: sessionId },
-          data: {
-            totalTokens: { increment: totalInputTokens + totalOutputTokens },
-            promptTokens: { increment: totalInputTokens },
-            completionTokens: { increment: totalOutputTokens },
-            durationMs: { increment: duration }
-          }
-        })
-
-        // Update request as completed
-        await prisma.userRequest.update({
-          where: { id: requestId },
-          data: { 
-            status: 'completed',
-            outputData: finalResponse,
-            completedAt: new Date(),
-            durationMs: duration
-          }
-        })
-
-        // Emit completion via WebSocket
+        await prisma.message.update({ where: { id: aiMessage.id }, data: { content: fullResponse, status: 'completed' } })
+        await prisma.session.update({ where: { id: sessionId }, data: { durationMs: { increment: duration } } })
+        await prisma.userRequest.update({ where: { id: requestId }, data: { status: 'completed', outputData: fullResponse, completedAt: new Date(), durationMs: duration } })
         if (global.io) {
-          global.io.to(projectId).emit('message_complete', {
-            type: 'message_complete',
-            data: {
-              message_id: aiMessage.id,
-              request_id: requestId,
-              content: finalResponse,
-              status: 'completed',
-              tokens: {
-                input: totalInputTokens,
-                output: totalOutputTokens,
-                total: totalInputTokens + totalOutputTokens
-              },
-              duration_ms: duration
-            }
-          })
-
-          global.io.to(projectId).emit('processing_complete', {
-            type: 'processing_complete',
-            data: {
-              request_id: requestId,
-              status: 'completed'
-            }
-          })
+          global.io.to(projectId).emit('message_complete', { type: 'message_complete', data: { message_id: aiMessage.id, request_id: requestId, content: fullResponse, status: 'completed' } })
+          global.io.to(projectId).emit('processing_complete', { type: 'processing_complete', data: { request_id: requestId, status: 'completed' } })
         }
-      },
-      // onError - handle errors
-      async (error: Error) => {
-        const endTime = Date.now()
-        const duration = endTime - startTime
-
-        console.error('Claude API error:', error)
-
-        // Update AI message with error status
-        await prisma.message.update({
-          where: { id: aiMessage.id },
-          data: { 
-            content: 'I apologize, but I encountered an error while processing your request. Please try again.',
-            status: 'error',
-            errorMessage: error.message
-          }
-        })
-
-        // Update request as failed
-        await prisma.userRequest.update({
-          where: { id: requestId },
-          data: { 
-            status: 'failed',
-            errorMessage: error.message,
-            completedAt: new Date(),
-            durationMs: duration
-          }
-        })
-
-        // Emit error via WebSocket
-        if (global.io) {
-          global.io.to(projectId).emit('processing_error', {
-            type: 'processing_error',
-            data: {
-              request_id: requestId,
-              message_id: aiMessage.id,
-              error: error.message
-            }
-          })
-        }
-      }
-    )
+        resolve()
+      })
+    })
   } catch (error) {
     const endTime = Date.now()
     const duration = endTime - startTime
@@ -363,7 +302,7 @@ async function processAIResponse(projectId: string, sessionId: string, requestId
       }
     })
 
-    // Emit error via WebSocket
+    // Emit error via WebSocket and finalize
     if (global.io) {
       global.io.to(projectId).emit('processing_error', {
         type: 'processing_error',
@@ -372,6 +311,7 @@ async function processAIResponse(projectId: string, sessionId: string, requestId
           error: error.message
         }
       })
+      global.io.to(projectId).emit('message_complete', { type: 'message_complete', data: { message_id: undefined, request_id: requestId, content: String((error as any)?.message || error), status: 'error' } })
     }
   }
 }

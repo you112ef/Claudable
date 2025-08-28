@@ -2,6 +2,8 @@
 
 const { spawn } = require('child_process');
 const { killPort } = require('./kill-port');
+const path = require('path');
+const { spawnSync } = require('child_process');
 
 const port = process.env.PORT || 3000;
 
@@ -10,6 +12,29 @@ async function startDev() {
   console.log(`🔍 Checking port ${port}...`);
   killPort(port);
   
+  // 1.5. Ensure env + prisma before starting server (just-works DX)
+  try {
+    // apps/web/scripts → project root
+    const rootDir = path.join(__dirname, '..', '..', '..');
+    // Run root env setup
+    console.log('🧩 Ensuring environment...');
+    spawnSync('node', [path.join(rootDir, 'scripts', 'setup-env.js')], { stdio: 'inherit' });
+    // Generate Prisma client
+    console.log('🧬 Generating Prisma client...');
+    const gen = spawnSync('npx', ['prisma', 'generate'], { cwd: path.join(rootDir, 'apps', 'web'), stdio: 'inherit' });
+    if (gen.status !== 0) console.warn('⚠️  prisma generate failed, continuing...');
+    // Force fresh schema (setup-env already removed old DB)
+    console.log('🗃️  Applying database schema...');
+    const webDir = path.join(rootDir, 'apps', 'web');
+    const push = spawnSync('npx', ['prisma', 'db', 'push'], { cwd: webDir, stdio: 'inherit' });
+    if (push.status !== 0) {
+      console.warn('⚠️  prisma db push failed, forcing reset (dev only)...');
+      spawnSync('npx', ['prisma', 'db', 'push', '--force-reset', '--accept-data-loss'], { cwd: webDir, stdio: 'inherit' });
+    }
+  } catch (e) {
+    console.warn('⚠️  Env/Prisma bootstrap skipped:', e.message);
+  }
+
   // 2. 서버 시작
   console.log(`🚀 Starting Next.js server on port ${port}...`);
   console.log('━'.repeat(50));

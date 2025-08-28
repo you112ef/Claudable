@@ -8,12 +8,12 @@
     "apps/desktop"
   ],
   "scripts": {
-    "dev": "npm run ensure:env && npm run ensure:venv && concurrently --raw \"npm run dev:api\" --prefix \"[WEB] \" \"npm run dev:web\"",
+    "dev": "npm run ensure:env && concurrently --raw --prefix \"[WEB] \" \"npm run dev:web\"",
     "dev:api": "node scripts/run-api.js",
     "dev:web": "node scripts/run-web.js",
     "ensure:env": "node scripts/setup-env.js",
     "ensure:venv": "node scripts/setup-venv.js",
-    "postinstall": "npm run ensure:env && npm run ensure:venv",
+    "postinstall": "npm run ensure:env",
     "setup": "npm install",
     "clean": "node scripts/clean.js",
     "db:reset": "node scripts/reset-db.js",

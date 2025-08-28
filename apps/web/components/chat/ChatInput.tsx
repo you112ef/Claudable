@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { SendHorizontal, MessageSquare, Image, Wrench } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface UploadedImage {
   id: string;

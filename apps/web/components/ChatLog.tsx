@@ -101,7 +101,7 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
 };
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || 'ws://localhost:8080';
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface ChatMessage {
   id: string;

@@ -73,11 +73,7 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
     
     // Create web .env.local file (only if it doesn't exist)
     if (!fs.existsSync(webEnvFile)) {
-      const webEnvContent = `# Auto-generated environment configuration
-NEXT_PUBLIC_API_BASE=http://localhost:${apiPort}
-NEXT_PUBLIC_WS_BASE=ws://localhost:${apiPort}
-`;
-      
+      const webEnvContent = `# Auto-generated environment configuration\n# Leave API base empty to use Next.js internal API routes (relative /api).\n# Set NEXT_PUBLIC_API_URL to proxy to external API via next.config.js fallback if needed.\nNEXT_PUBLIC_API_BASE=\nNEXT_PUBLIC_WS_BASE=\n`;
       fs.writeFileSync(webEnvFile, webEnvContent);
       console.log(`  Created apps/web/.env.local`);
     } else {

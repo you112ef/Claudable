@@ -14,6 +14,14 @@ interface RouteParams {
   }
 }
 
+interface Commit {
+  commit_sha: string
+  parent_sha?: string
+  author?: string
+  date?: string
+  message: string
+}
+
 // OPTIONS handler for CORS preflight
 export async function OPTIONS(request: NextRequest) {
   return handleCors(request) || new NextResponse(null, { status: 200 })
@@ -23,6 +31,61 @@ export async function OPTIONS(request: NextRequest) {
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { searchParams } = new URL(request.url)
+    const commitSha = searchParams.get('commit_sha')
+    const action = searchParams.get('action')
+
+    // Check if project exists
+    const project = await prisma.project.findUnique({
+      where: { id: params.projectId }
+    })
+
+    if (!project) {
+      return errorResponse('Project not found', 404)
+    }
+
+    const repoPath = path.join(project.path, 'repo')
+    
+    // Handle specific commit diff request
+    if (commitSha && action === 'diff') {
+      try {
+        const { stdout: diff } = await execAsync(
+          `git show ${commitSha}`,
+          { cwd: repoPath }
+        )
+        return successResponse({ diff })
+      } catch (error) {
+        console.error('Error getting commit diff:', error)
+        return errorResponse('Failed to get commit diff', 500)
+      }
+    }
+
+    // Handle git log based commits (FastAPI style)
+    if (searchParams.get('use_git') === 'true') {
+      try {
+        const { stdout: logOutput } = await execAsync(
+          'git log --pretty=format:"%H|%P|%an|%ai|%s" --max-count=50',
+          { cwd: repoPath }
+        )
+
+        const commits: Commit[] = logOutput.trim().split('\n').map(line => {
+          const [commit_sha, parent_sha, author, date, message] = line.split('|')
+          return {
+            commit_sha: commit_sha?.trim() || '',
+            parent_sha: parent_sha?.trim() || undefined,
+            author: author?.trim() || undefined,
+            date: date?.trim() || undefined,
+            message: message?.trim() || ''
+          }
+        }).filter(commit => commit.commit_sha)
+
+        return successResponse(commits)
+      } catch (error) {
+        console.error('Error fetching git commits:', error)
+        return errorResponse('Failed to fetch git commits', 500)
+      }
+    }
+
+    // Default: use database commits
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -54,15 +117,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// POST /api/commits/[projectId] - Create a new commit
+// POST /api/commits/[projectId] - Create a new commit or revert to commit
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const body = await request.json()
-    const { message, files = [] } = body
-
-    if (!message) {
-      return errorResponse('Commit message is required', 400)
-    }
+    const { message, files = [], commit_sha, action } = body
 
     // Get project to find the path
     const project = await prisma.project.findUnique({
@@ -73,28 +132,48 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return errorResponse('Project not found', 404)
     }
 
-    const projectPath = project.path
+    const repoPath = path.join(project.path, 'repo')
+
+    // Handle revert action
+    if (action === 'revert' && commit_sha) {
+      try {
+        // Perform hard reset to the specified commit
+        await execAsync(`git reset --hard ${commit_sha}`, { cwd: repoPath })
+        return successResponse({ 
+          ok: true,
+          message: `Successfully reverted to commit ${commit_sha}`
+        })
+      } catch (error) {
+        console.error('Error reverting to commit:', error)
+        return errorResponse('Failed to revert to commit', 500)
+      }
+    }
+
+    // Handle normal commit creation
+    if (!message) {
+      return errorResponse('Commit message is required', 400)
+    }
 
     // Stage files if provided
     if (files.length > 0) {
       for (const file of files) {
-        await execAsync(`git add "${file}"`, { cwd: projectPath })
+        await execAsync(`git add "${file}"`, { cwd: repoPath })
       }
     } else {
       // Stage all changes
-      await execAsync('git add .', { cwd: projectPath })
+      await execAsync('git add .', { cwd: repoPath })
     }
 
     // Create commit
     const { stdout: commitOutput } = await execAsync(
       `git commit -m "${message.replace(/"/g, '\\"')}"`,
-      { cwd: projectPath }
+      { cwd: repoPath }
     )
 
     // Get commit details
     const { stdout: logOutput } = await execAsync(
       'git log -1 --format="%H|%an|%s|%b|%ai"',
-      { cwd: projectPath }
+      { cwd: repoPath }
     )
 
     const [hash, author, subject, , timestamp] = logOutput.trim().split('|')
@@ -102,13 +181,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Get branch
     const { stdout: branchOutput } = await execAsync(
       'git branch --show-current',
-      { cwd: projectPath }
+      { cwd: repoPath }
     )
 
     // Get stats
     const { stdout: statsOutput } = await execAsync(
       `git diff-tree --no-commit-id --numstat -r ${hash}`,
-      { cwd: projectPath }
+      { cwd: repoPath }
     )
 
     const stats = statsOutput.trim().split('\n').filter(Boolean)

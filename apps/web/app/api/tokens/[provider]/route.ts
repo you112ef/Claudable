@@ -9,31 +9,60 @@ interface RouteParams {
   }
 }
 
+interface TokenResponse {
+  id: string
+  provider: string
+  name: string
+  created_at: Date
+  last_used?: Date
+}
+
 // OPTIONS handler for CORS preflight
 export async function OPTIONS(request: NextRequest) {
   return handleCors(request) || new NextResponse(null, { status: 200 })
 }
 
-// GET /api/tokens/[provider] - Get token for provider
+// GET /api/tokens/[provider] - Get service token by provider
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const token = await prisma.token.findUnique({
-      where: { serviceName: params.provider }
-    })
+    const { provider } = params
+    const { searchParams } = new URL(request.url)
+    const internal = searchParams.get('internal') === 'true'
 
-    if (!token) {
-      return successResponse({ exists: false })
+    // Validate provider
+    if (!['github', 'supabase', 'vercel'].includes(provider)) {
+      return errorResponse('Invalid provider', 400)
     }
 
-    return successResponse({
-      exists: true,
-      service_name: token.serviceName,
-      access_token: token.accessToken,
-      refresh_token: token.refreshToken,
-      expires_at: token.expiresAt,
-      created_at: token.createdAt,
-      updated_at: token.updatedAt
+    const serviceToken = await prisma.token.findUnique({
+      where: { serviceName: provider }
     })
+
+    if (!serviceToken) {
+      return errorResponse('Token not found', 404)
+    }
+
+    // If internal request, return the actual token for service integrations
+    if (internal) {
+      // Update last used timestamp
+      await prisma.token.update({
+        where: { id: serviceToken.id },
+        data: { updatedAt: new Date() }
+      })
+
+      return successResponse({ token: serviceToken.accessToken })
+    }
+
+    // Regular request, return token metadata only
+    const response: TokenResponse = {
+      id: serviceToken.id,
+      provider: serviceToken.serviceName,
+      name: `${provider.charAt(0).toUpperCase() + provider.slice(1)} Token`,
+      created_at: serviceToken.createdAt,
+      last_used: serviceToken.updatedAt
+    }
+
+    return successResponse(response)
   } catch (error) {
     console.error('Error fetching token:', error)
     return errorResponse('Failed to fetch token', 500)
@@ -92,20 +121,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE /api/tokens/[provider] - Delete token
+// DELETE /api/tokens/[provider] - Delete a service token
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const token = await prisma.token.findUnique({
-      where: { serviceName: params.provider }
-    })
+    const { provider } = params
 
-    if (!token) {
-      return errorResponse('Token not found', 404)
+    // Validate provider
+    if (!['github', 'supabase', 'vercel'].includes(provider)) {
+      return errorResponse('Invalid provider', 400)
     }
 
-    await prisma.token.delete({
-      where: { id: token.id }
+    const deletedToken = await prisma.token.deleteMany({
+      where: { serviceName: provider }
     })
+
+    if (deletedToken.count === 0) {
+      return errorResponse('Token not found', 404)
+    }
 
     return successResponse({ message: 'Token deleted successfully' })
   } catch (error) {

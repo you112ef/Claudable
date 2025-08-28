@@ -100,8 +100,8 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
   return <ToolResultItem action={action} filePath={filePath} content={cleanContent} />;
 };
 
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || 'ws://localhost:8080';
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface ChatMessage {
   id: string;

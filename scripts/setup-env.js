@@ -71,11 +71,12 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
     fs.writeFileSync(envFile, envContent);
     console.log(`  Created .env`);
     
-    // Create web .env.local file (only if it doesn't exist)
+    // Create web .env.local file for Next.js fullstack (only if it doesn't exist)
     if (!fs.existsSync(webEnvFile)) {
       const webEnvContent = `# Auto-generated environment configuration
-NEXT_PUBLIC_API_BASE=http://localhost:${apiPort}
-NEXT_PUBLIC_WS_BASE=ws://localhost:${apiPort}
+# Using relative URLs for Next.js API routes
+NEXT_PUBLIC_API_BASE=
+NEXT_PUBLIC_WS_BASE=
 `;
       
       fs.writeFileSync(webEnvFile, webEnvContent);

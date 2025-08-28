@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface SupabaseModalProps {
   isOpen: boolean;

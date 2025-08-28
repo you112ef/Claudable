@@ -11,12 +11,14 @@ function killPort(port) {
       try {
         const result = execSync(`lsof -ti:${port}`, { encoding: 'utf8' }).trim();
         if (result) {
-          console.log(`📍 Port ${port} is in use by PID ${result}`);
+          const pids = result.split('\n').filter(Boolean);
+          console.log(`📍 Port ${port} is in use by PID ${pids.join(', ')}`);
+          console.log(pids[0]); // For compatibility with existing scripts that expect this line
           console.log(`🔪 Killing process...`);
-          execSync(`kill -9 ${result}`);
+          execSync(`kill -9 ${pids.join(' ')}`);
           console.log(`✅ Port ${port} is now free`);
           // 프로세스가 완전히 종료될 때까지 잠시 대기
-          execSync('sleep 1');
+          execSync('sleep 2');
         }
       } catch (e) {
         // lsof가 아무것도 찾지 못하면 에러가 발생하지만 이는 정상

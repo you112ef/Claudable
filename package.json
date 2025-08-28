@@ -8,17 +8,17 @@
     "apps/desktop"
   ],
   "scripts": {
-    "dev": "npm run ensure:env && npm run ensure:venv && concurrently --raw \"npm run dev:api\" --prefix \"[WEB] \" \"npm run dev:web\"",
-    "dev:api": "node scripts/run-api.js",
-    "dev:web": "node scripts/run-web.js",
+    "dev": "npm run ensure:env && npm --workspace apps/web run dev",
+    "dev:api": "echo 'API is now integrated into Next.js'",
+    "dev:web": "npm --workspace apps/web run dev",
     "ensure:env": "node scripts/setup-env.js",
-    "ensure:venv": "node scripts/setup-venv.js",
-    "postinstall": "npm run ensure:env && npm run ensure:venv",
+    "ensure:venv": "echo 'Python venv no longer needed with Next.js'",
+    "postinstall": "npm run ensure:env",
     "setup": "npm install",
     "clean": "node scripts/clean.js",
     "db:reset": "node scripts/reset-db.js",
     "db:backup": "node scripts/backup-db.js",
-    "dev:desktop": "cross-env BROWSER=none concurrently --raw \"npm run dev\" \"node scripts/wait-web.js && npm --workspace apps/desktop run start\"",
+    "dev:desktop": "cross-env BROWSER=none concurrently --raw \"npm --workspace apps/web run dev\" \"node scripts/wait-web.js && npm --workspace apps/desktop run start\"",
     "build:desktop": "npm --workspace apps/web run build && npm --workspace apps/desktop run dist"
   },
   "devDependencies": {

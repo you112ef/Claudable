@@ -28,10 +28,9 @@ process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = isDev ? 'true' : process.env.EL
  * Create the main application window
  */
 async function createMainWindow() {
-  // In packaged mode, we self-host Next (8080) and proxy API to Python runner (default 18080)
+  // In packaged mode, we self-host Next.js fullstack app
   const packaged = app.isPackaged;
   const defaultWebPort = packaged ? 8080 : (process.env.WEB_PORT || 3000);
-  let desiredApiPort = packaged ? 18080 : (process.env.API_PORT || 8080);
 
   const useSandbox = process.env.ELECTRON_DISABLE_SANDBOX === '1' ? false : true;
   const win = new BrowserWindow({
@@ -57,24 +56,21 @@ async function createMainWindow() {
     try {
       const resourcesPath = process.resourcesPath;
       const webDir = path.join(resourcesPath, 'web');
-      const apiDir = path.join(resourcesPath, 'api');
 
-      // Start API (Python, venv stored in userData) with retry and port fallback
-      const { apiPort, apiChild } = await startApiWithRetry({ apiDir, desiredApiPort, userDataDir: app.getPath('userData') });
-      // Start Next server with proxy to API
-      await startWebServer({ webDir, webPort: defaultWebPort, apiPort });
+      // Start Next.js fullstack server
+      await startWebServer({ webDir, webPort: defaultWebPort });
       const startUrl = `http://localhost:${defaultWebPort}`;
       await win.loadURL(startUrl);
 
       // Graceful shutdown
       const clean = () => {
-        try { apiChild.kill('SIGINT'); } catch (_) {}
+        // Next.js server cleanup handled by the server itself
       };
       app.on('before-quit', clean);
       win.on('closed', clean);
     } catch (err) {
-      const hint = err && err.logFile ? `\n\n설치/실행 로그 파일을 확인하세요:\n${err.logFile}` : '';
-      dialog.showErrorBox('앱 시작 실패', `${err.message}${hint}`);
+      const hint = err && err.logFile ? `\n\nCheck the log file:\n${err.logFile}` : '';
+      dialog.showErrorBox('App Start Failed', `${err.message}${hint}`);
       app.quit();
       return;
     }

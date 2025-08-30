@@ -18,17 +18,23 @@
     "setup": "npm install",
     "clean": "node scripts/clean.js",
     "db:reset": "node scripts/reset-db.js",
-    "db:backup": "node scripts/backup-db.js"
+    "db:backup": "node scripts/backup-db.js",
+    "prisma:generate": "node scripts/run-prisma.js generate",
+    "prisma:migrate": "node scripts/run-prisma.js migrate",
+    "db:seed": "node scripts/run-prisma.js seed",
+    "db:migrate:safe": "npm run db:backup && npm run prisma:migrate"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "prisma": "^5.18.0"
   },
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
   },
   "dependencies": {
+    "@prisma/client": "^5.18.0",
     "react-icons": "^5.5.0"
   }
 }

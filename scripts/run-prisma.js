@@ -63,8 +63,19 @@ switch (cmd) {
   case 'generate':
     runPrisma(['generate', '--schema', 'packages/db/prisma/schema.prisma'])
     break
-  case 'migrate':
-    runPrisma(['migrate', 'dev', '--schema', 'packages/db/prisma/schema.prisma'], { backup: true })
+  case 'migrate': {
+    const isInteractive = process.stdout.isTTY && process.env.CI !== 'true'
+    const args = isInteractive
+      ? ['migrate', 'dev', '--schema', 'packages/db/prisma/schema.prisma']
+      : ['db', 'push', '--schema', 'packages/db/prisma/schema.prisma']
+    runPrisma(args, { backup: true })
+    break
+  }
+  case 'push':
+    runPrisma(['db', 'push', '--schema', 'packages/db/prisma/schema.prisma'], { backup: true })
+    break
+  case 'deploy':
+    runPrisma(['migrate', 'deploy', '--schema', 'packages/db/prisma/schema.prisma'])
     break
   case 'seed':
     // Run a simple seed script using generated client if available
@@ -75,4 +86,3 @@ switch (cmd) {
     console.log('Usage: node scripts/run-prisma.js <generate|migrate|seed> [-- extra args]')
     process.exit(0)
 }
-

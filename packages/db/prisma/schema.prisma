@@ -10,21 +10,21 @@ datasource db {
 }
 
 model Project {
-  id                      String   @id @db.Text
+  id                      String   @id
   name                    String
-  description             String?  @db.Text
+  description             String?
   status                  String   @default("idle")
   previewUrl              String?  @map("preview_url")
   previewPort             Int?     @map("preview_port")
   repoPath                String?  @map("repo_path")
-  initialPrompt           String?  @map("initial_prompt") @db.Text
+  initialPrompt           String?  @map("initial_prompt")
   templateType            String?  @map("template_type")
   activeClaudeSessionId   String?  @map("active_claude_session_id")
   activeCursorSessionId   String?  @map("active_cursor_session_id")
   preferredCli            String   @default("claude") @map("preferred_cli")
   selectedModel           String?  @map("selected_model")
   fallbackEnabled         Boolean  @default(true) @map("fallback_enabled")
-  settings                Json?
+  settings                String?
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @default(now()) @map("updated_at")
   lastActiveAt            DateTime? @map("last_active_at")
@@ -41,18 +41,18 @@ model Project {
 }
 
 model Message {
-  id               String   @id @db.Text
+  id               String   @id
   projectId        String   @map("project_id")
   role             String
   messageType      String?  @map("message_type")
-  content          String   @db.Text
-  metadataJson     Json?    @map("metadata_json")
+  content          String
+  metadataJson     String?    @map("metadata_json")
   parentMessageId  String?  @map("parent_message_id")
   sessionId        String?  @map("session_id")
   conversationId   String?  @map("conversation_id")
   durationMs       Int?     @map("duration_ms")
   tokenCount       Int?     @map("token_count")
-  costUsd          Decimal? @db.Decimal(10, 6) @map("cost_usd")
+  costUsd          Float? @map("cost_usd")
   commitSha        String?  @map("commit_sha")
   cliSource        String?  @map("cli_source")
   createdAt        DateTime @default(now()) @map("created_at")
@@ -61,6 +61,8 @@ model Message {
   parent  Message? @relation("MessageToMessage", fields: [parentMessageId], references: [id], onDelete: SetNull)
   replies Message[] @relation("MessageToMessage")
   session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  toolUsages ToolUsage[]
+  userRequest UserRequest?
 
   @@index([sessionId])
   @@index([conversationId])
@@ -69,7 +71,7 @@ model Message {
 }
 
 model Session {
-  id               String   @id @db.Text
+  id               String   @id
   projectId        String   @map("project_id")
   claudeSessionId  String?  @map("claude_session_id")
   status           String   @default("active")
@@ -77,12 +79,12 @@ model Session {
   cliType          String   @default("claude") @map("cli_type")
   transcriptPath   String?  @map("transcript_path")
   transcriptFormat String   @default("json") @map("transcript_format")
-  instruction      String?  @db.Text
-  summary          String?  @db.Text
+  instruction      String?
+  summary          String?
   totalMessages    Int      @default(0) @map("total_messages")
   totalToolsUsed   Int      @default(0) @map("total_tools_used")
   totalTokens      Int      @default(0) @map("total_tokens")
-  totalCostUsd     Decimal? @db.Decimal(10, 6) @map("total_cost_usd")
+  totalCostUsd     Float? @map("total_cost_usd")
   durationMs       Int?     @map("duration_ms")
   startedAt        DateTime @default(now()) @map("started_at")
   completedAt      DateTime? @map("completed_at")
@@ -91,24 +93,25 @@ model Session {
   messages     Message[]
   toolsUsage   ToolUsage[]
   userRequests UserRequest[]
+  commits      Commit[]
 
   @@index([projectId])
   @@map("sessions")
 }
 
 model Commit {
-  id          String   @id @db.Text
+  id          String   @id
   projectId   String   @map("project_id")
   sessionId   String?  @map("session_id")
   commitSha   String   @unique @map("commit_sha")
   parentSha   String?  @map("parent_sha")
-  message     String   @db.Text
+  message     String
   authorType  String?  @map("author_type")
   authorName  String?  @map("author_name")
   authorEmail String?  @map("author_email")
-  filesChanged Json?   @map("files_changed")
-  stats        Json?   @map("stats")
-  diff         String? @db.Text
+  filesChanged String?   @map("files_changed")
+  stats        String?   @map("stats")
+  diff         String?
   committedAt  DateTime @default(now()) @map("committed_at")
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -119,14 +122,14 @@ model Commit {
 }
 
 model EnvVar {
-  id              String   @id @db.Text
+  id              String   @id
   projectId       String   @map("project_id")
   key             String
-  valueEncrypted  String   @db.Text @map("value_encrypted")
+  valueEncrypted  String   @map("value_encrypted")
   scope           String   @default("runtime")
   varType         String   @default("string") @map("var_type")
   isSecret        Boolean  @default(true) @map("is_secret")
-  description     String?  @db.Text
+  description     String?
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @default(now()) @map("updated_at")
 
@@ -138,10 +141,10 @@ model EnvVar {
 }
 
 model ServiceToken {
-  id        String   @id @db.Text
+  id        String   @id
   provider  String
   name      String
-  token     String   @db.Text
+  token     String
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @map("updated_at")
   lastUsed  DateTime? @map("last_used")
@@ -151,11 +154,11 @@ model ServiceToken {
 }
 
 model ProjectServiceConnection {
-  id          String   @id @db.Text
+  id          String   @id
   projectId   String
   provider    String
   status      String   @default("connected")
-  serviceData Json?    @map("service_data")
+  serviceData String?    @map("service_data")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime? @map("updated_at")
   lastSyncAt  DateTime? @map("last_sync_at")
@@ -168,20 +171,20 @@ model ProjectServiceConnection {
 }
 
 model ToolUsage {
-  id            String   @id @db.Text
+  id            String   @id
   sessionId     String   @map("session_id")
   projectId     String   @map("project_id")
   messageId     String?  @map("message_id")
   toolName      String   @map("tool_name")
   toolAction    String?  @map("tool_action")
-  inputData     Json?    @map("input_data")
-  outputData    Json?    @map("output_data")
-  filesAffected Json?    @map("files_affected")
+  inputData     String?    @map("input_data")
+  outputData    String?    @map("output_data")
+  filesAffected String?    @map("files_affected")
   linesAdded    Int?     @map("lines_added")
   linesRemoved  Int?     @map("lines_removed")
   durationMs    Int?     @map("duration_ms")
   isError       Boolean  @default(false) @map("is_error")
-  errorMessage  String?  @db.Text @map("error_message")
+  errorMessage  String?  @map("error_message")
   createdAt     DateTime @default(now()) @map("created_at")
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -195,16 +198,16 @@ model ToolUsage {
 }
 
 model UserRequest {
-  id             String   @id @db.Text
+  id             String   @id
   projectId      String   @map("project_id")
   userMessageId  String   @unique @map("user_message_id")
   sessionId      String?  @map("session_id")
-  instruction    String   @db.Text
+  instruction    String
   requestType    String   @default("act") @map("request_type")
   isCompleted    Boolean  @default(false) @map("is_completed")
   isSuccessful   Boolean? @map("is_successful")
-  resultMetadata Json?    @map("result_metadata")
-  errorMessage   String?  @db.Text @map("error_message")
+  resultMetadata String?    @map("result_metadata")
+  errorMessage   String?  @map("error_message")
   cliTypeUsed    String?  @map("cli_type_used")
   modelUsed      String?  @map("model_used")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -220,4 +223,3 @@ model UserRequest {
   @@index([isCompleted])
   @@map("user_requests")
 }
-

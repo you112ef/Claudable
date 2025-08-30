@@ -40,8 +40,8 @@ export function useWebSocket({
     }
 
     try {
-      const wsUrl = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.hostname}:8787` : 'ws://localhost:8787');
-      const fullUrl = `${wsUrl}/api/chat/${projectId}`;
+      const wsBase = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
+      const fullUrl = `${wsBase}/api/chat/${projectId}`;
       const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {

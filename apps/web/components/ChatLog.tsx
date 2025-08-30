@@ -101,7 +101,7 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
   return <ToolResultItem action={action as "Edited" | "Created" | "Read" | "Deleted" | "Generated" | "Searched" | "Executed"} filePath={filePath} content={cleanContent} />;
 };
 
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.hostname}:8787` : 'ws://localhost:8787');
+const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface ChatMessage {

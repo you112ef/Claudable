@@ -4,10 +4,10 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "dev": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 ELECTRON_START_URL=http://localhost:3000 electron ."
+    "dev": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 WS_STANDALONE=0 ELECTRON_START_URL=http://localhost:3000 electron .",
+    "start": "electron ."
   },
   "devDependencies": {
     "electron": "^31.3.1"
   }
 }
-

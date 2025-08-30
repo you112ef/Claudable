@@ -1,6 +1,8 @@
 // Shared WebSocket event types and a minimal in-memory project registry
-// Start server-side WS acceptor in Node runtime (fire-and-forget)
-try { import('./server').catch(() => {}) } catch {}
+// Start server-side WS acceptor in Node runtime (fire-and-forget) unless disabled
+if (!process.env.WS_STANDALONE || process.env.WS_STANDALONE === '1' || process.env.WS_STANDALONE === 'true') {
+  try { import('./server').catch(() => {}) } catch {}
+}
 
 export type WSMessageEvent = {
   type: 'message'

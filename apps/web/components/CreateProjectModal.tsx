@@ -5,7 +5,7 @@ import { AnimatePresence } from 'framer-motion';
 import { MotionDiv, MotionP } from '../lib/motion';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.hostname}:8787` : 'ws://localhost:8787');
+const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
 
 interface CLIOption {
   id: string;

@@ -50,3 +50,18 @@ export async function hardReset(repoPath: string, commitSha: string): Promise<vo
   await runGit(repoPath, ['reset', '--hard', commitSha])
 }
 
+export async function hasChanges(repoPath: string): Promise<boolean> {
+  const out = await runGit(repoPath, ['status', '--porcelain']).catch(() => '')
+  return !!(out && out.trim().length > 0)
+}
+
+export async function commitAll(repoPath: string, message: string): Promise<{ success: boolean; commit_hash?: string; message: string; error?: string }> {
+  try {
+    await runGit(repoPath, ['add', '-A'])
+    await runGit(repoPath, ['commit', '-m', message])
+    const hash = await runGit(repoPath, ['rev-parse', 'HEAD'])
+    return { success: true, commit_hash: hash, message }
+  } catch (e: any) {
+    return { success: false, message, error: e?.message || String(e) }
+  }
+}

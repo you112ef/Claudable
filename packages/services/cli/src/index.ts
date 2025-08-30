@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { getPrisma } from '@repo/db'
 import { wsRegistry } from '@repo/ws'
+import { commitAll, hasChanges } from '@repo/services-git' 
 
 export const ActRequestSchema = z.object({
   instruction: z.string().min(1),
@@ -84,7 +85,27 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
     wsRegistry.broadcast(projectId, { type: 'message', data: { id: m.id, role: 'assistant', content: m.content, session_id: session.id, conversation_id: conversationId, created_at: m.createdAt }, timestamp: new Date().toISOString() } as any)
   }
 
+  
+  // Optional commit on success for ACT mode
+  if (mode === 'act' && result.success) {
+    const repo = project.repoPath as string | null
+    if (repo) {
+      try {
+        if (await hasChanges(repo)) {
+          const commitRes = await commitAll(repo, 'chore(act): apply changes')
+          if (!commitRes.success) {
+            // emit an error as cli_output
+            wsRegistry.broadcast(projectId, { type: 'cli_output', output: `Commit failed: ${commitRes.error}`, cli_type: cliType } as any)
+          }
+        }
+      } catch (e: any) {
+        wsRegistry.broadcast(projectId, { type: 'cli_output', output: `Commit check error: ${e?.message || e}`, cli_type: cliType } as any)
+      }
+    }
+  }
+
   await completeSession(prisma as any, session.id, !!result.success)
+
 
   // Broadcast complete
   wsRegistry.broadcast(projectId, (

@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { getPrisma } from '@repo/db'
 import { loadSystemPrompt } from '@repo/services-projects'
+import { ACPClient } from './acp'
 
 export type AdapterEvent =
   | { kind: 'output'; text: string }
@@ -298,6 +299,185 @@ class CursorAdapter implements CLIAdapter {
   }
 }
 
+class QwenAdapter implements CLIAdapter {
+  name = 'qwen'
+  private static client: ACPClient | null = null
+  private static initialized = false
+  async checkAvailability() {
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn('qwen', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let done = false
+      child.on('error', () => { if (!done) { done = true; resolve(false) } })
+      child.on('close', (code) => { if (!done) { done = true; resolve(code === 0) } })
+      setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch {}; resolve(false) } }, 1500)
+    })
+    return { available: ok, configured: ok, default_models: [] }
+  }
+  private async ensureClient(cwd: string) {
+    if (QwenAdapter.client) return QwenAdapter.client
+    const env = { ...process.env, NO_BROWSER: '1' }
+    const client = new ACPClient(['qwen', '--experimental-acp'], env, cwd)
+    await client.start()
+    client.onRequest('session/request_permission', async (params) => {
+      const opts = (params?.options as any[]) || []
+      let chosen: any = null
+      for (const kind of ['allow_always', 'allow_once']) { chosen = opts.find((o) => o.kind === kind); if (chosen) break }
+      if (!chosen && opts.length) chosen = opts[0]
+      if (!chosen) return { outcome: { outcome: 'cancelled' } }
+      return { outcome: { outcome: 'selected', optionId: chosen.optionId } }
+    })
+    client.onRequest('fs/read_text_file', async () => ({ content: '' }))
+    client.onRequest('fs/write_text_file', async () => ({}))
+    await client.request('initialize', { clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } }, protocolVersion: 1 })
+    QwenAdapter.client = client
+    QwenAdapter.initialized = true
+    return client
+  }
+  async *executeWithStreaming(opts: ExecuteOptions): AsyncGenerator<AdapterEvent> {
+    const repoCwd = opts.projectPath || process.cwd()
+    await ensureAgentsMd(repoCwd)
+    const client = await this.ensureClient(repoCwd)
+    const projectId = projectIdFromPath(repoCwd)
+    // Ensure session
+    let sessionId: string | null = await getQwenSessionId(projectId)
+    if (!sessionId) {
+      try { const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] }); sessionId = res?.sessionId || null; if (sessionId) await setQwenSessionId(projectId, sessionId) } catch (e) {}
+    }
+    if (!sessionId) { yield { kind: 'result', success: false, error: 'Qwen session failed' }; return }
+    // Notification stream
+    const q: any[] = []
+    client.onNotification('session/update', (params) => { if (params?.sessionId === sessionId) q.push(params.update || {}) })
+    // Build prompt (Qwen: ignore images)
+    const parts: any[] = []
+    if (opts.instruction) parts.push({ type: 'text', text: opts.instruction })
+    // Send prompt
+    await client.request('session/prompt', { sessionId, prompt: parts })
+    let thought: string[] = []
+    let text: string[] = []
+    function compose() { const parts = []; if (thought.length) parts.push(thought.join('')); if (text.length) { if (parts.length) parts.push('\n\n'); parts.push(text.join('')) } return parts.join('') }
+    const start = Date.now()
+    // Drain updates for a window (best-effort).
+    for (let i = 0; i < 500; i++) {
+      const upd = q.shift()
+      if (!upd) { await new Promise((r) => setTimeout(r, 10)); continue }
+      const kind = upd.sessionUpdate || upd.type
+      if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
+        const t = (upd.content?.text ?? upd.text ?? '') as string
+        if (kind === 'agent_thought_chunk') thought.push(t); else text.push(t)
+        continue
+      }
+      if (kind === 'tool_call' || kind === 'tool_call_update') {
+        if (kind === 'tool_call_update') continue
+        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
+        const toolName = (upd?.invocation?.tool || '') as string
+        const input = upd?.invocation?.args || {}
+        const summary = summarizeTool(toolName, input)
+        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', tool_name: toolName, tool_input: input } }
+        continue
+      }
+      if (kind === 'plan') {
+        const entries = (upd.entries || []).slice(0, 6).map((e: any) => (typeof e === 'string' ? e : e?.title)).filter(Boolean)
+        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
+        yield { kind: 'message', content: entries.map((s: string) => `• ${s}`).join('\n') || 'Planning…', role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }
+        continue
+      }
+    }
+    if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } } }
+    yield { kind: 'message', content: 'Qwen turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'qwen', hidden_from_ui: true } }
+    yield { kind: 'result', success: true }
+  }
+}
+
+class GeminiAdapter implements CLIAdapter {
+  name = 'gemini'
+  private static client: ACPClient | null = null
+  private static initialized = false
+  async checkAvailability() {
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn('gemini', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let done = false
+      child.on('error', () => { if (!done) { done = true; resolve(false) } })
+      child.on('close', (code) => { if (!done) { done = true; resolve(code === 0) } })
+      setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch {}; resolve(false) } }, 1500)
+    })
+    const token = !!process.env.GOOGLE_API_KEY
+    return { available: ok && token, configured: ok && token, default_models: [] }
+  }
+  private async ensureClient(cwd: string) {
+    if (GeminiAdapter.client) return GeminiAdapter.client
+    const env = { ...process.env, NO_BROWSER: '1' }
+    const client = new ACPClient(['gemini', '--experimental-acp'], env, cwd)
+    await client.start()
+    // Simple stderr logging omitted
+    await client.request('initialize', { clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } }, protocolVersion: 1 })
+    GeminiAdapter.client = client
+    GeminiAdapter.initialized = true
+    return client
+  }
+  async *executeWithStreaming(opts: ExecuteOptions): AsyncGenerator<AdapterEvent> {
+    const repoCwd = opts.projectPath || process.cwd()
+    await ensureAgentsMd(repoCwd)
+    const projectId = projectIdFromPath(repoCwd)
+    const client = await this.ensureClient(repoCwd)
+    let sessionId: string | null = await getGeminiSessionId(projectId)
+    if (!sessionId) {
+      try {
+        const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] })
+        sessionId = res?.sessionId || null
+      } catch (e: any) {
+        const method = process.env.GEMINI_AUTH_METHOD || 'oauth-personal'
+        try { await client.request('authenticate', { methodId: method }); const res2 = await client.request('session/new', { cwd: repoCwd, mcpServers: [] }); sessionId = res2?.sessionId || null } catch (e2) {
+          yield { kind: 'message', content: `Gemini authentication/session failed: ${e2?.message || e2}`, role: 'assistant', messageType: 'error', metadata: { cli_type: 'gemini' } }
+          yield { kind: 'result', success: false, error: 'auth failed' }
+          return
+        }
+      }
+      if (sessionId) await setGeminiSessionId(projectId, sessionId)
+    }
+    const q: any[] = []
+    client.onNotification('session/update', (params) => { if (params?.sessionId === sessionId) q.push(params.update || {}) })
+    // Build prompt parts
+    const parts: any[] = []
+    if (opts.instruction) parts.push({ type: 'text', text: opts.instruction })
+    if (opts.images && opts.images.length) {
+      for (const img of opts.images) {
+        let b64 = (img as any).base64_data || (img as any).data
+        if (!b64 && (img as any).url && (img as any).url.startsWith('data:')) { try { b64 = (img as any).url.split(',', 1)[1] } catch {} }
+        if (img.path && fs.existsSync(img.path)) {
+          try { const data = await fsp.readFile(img.path); const mime = mimeFor(img.path); const enc = data.toString('base64'); parts.push({ type: 'image', mimeType: mime, data: enc }) } catch {}
+        } else if (b64) {
+          parts.push({ type: 'image', mimeType: img.mime_type || 'image/png', data: String(b64) })
+        }
+      }
+    }
+    await client.request('session/prompt', { sessionId, prompt: parts })
+    const thought: string[] = []
+    const text: string[] = []
+    const compose = () => { const arr: string[] = []; if (thought.length) arr.push(thought.join('')); if (text.length) { if (arr.length) arr.push('\n\n'); arr.push(text.join('')) } return arr.join('') }
+    for (let i = 0; i < 800; i++) {
+      const upd = q.shift()
+      if (!upd) { await new Promise((r) => setTimeout(r, 10)); continue }
+      const kind = upd.sessionUpdate || upd.type
+      if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
+        const t = (upd.content?.text ?? upd.text ?? '') as string
+        if (kind === 'agent_thought_chunk') thought.push(t); else text.push(t)
+        continue
+      }
+      if (kind === 'tool_call' || kind === 'tool_call_update') {
+        if (kind === 'tool_call_update') continue
+        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }; thought.length = 0; text.length = 0 }
+        const toolName = (upd?.invocation?.tool || '') as string
+        const input = upd?.invocation?.args || {}
+        yield { kind: 'message', content: summarizeTool(toolName, input), role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', tool_name: toolName, tool_input: input } }
+        continue
+      }
+    }
+    if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } } }
+    yield { kind: 'message', content: 'Gemini turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'gemini', hidden_from_ui: true } }
+    yield { kind: 'result', success: true }
+  }
+}
+
 // Helpers
 function projectIdFromPath(repoCwd: string): string {
   const parts = repoCwd.split(path.sep)
@@ -425,5 +605,49 @@ export function getAdapter(cliType: string): CLIAdapter {
   const name = (cliType || 'claude').toLowerCase()
   if (name === 'codex') return new CodexAdapter()
   if (name === 'cursor') return new CursorAdapter()
+  if (name === 'qwen') return new QwenAdapter()
+  if (name === 'gemini') return new GeminiAdapter()
   return new SimulatedAdapter(name)
+}
+
+// Session helpers for ACP-based adapters
+async function getQwenSessionId(projectId: string): Promise<string | null> {
+  const prisma = await getPrisma()
+  const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+  if (!p?.activeCursorSessionId) return null
+  try { const data = JSON.parse(p.activeCursorSessionId); if (data && typeof data === 'object' && data.qwen) return data.qwen } catch {}
+  return null
+}
+async function setQwenSessionId(projectId: string, sessionId: string) {
+  const prisma = await getPrisma()
+  const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+  let data: any = {}
+  if (p?.activeCursorSessionId) { try { data = JSON.parse(p.activeCursorSessionId) } catch { data = { cursor: p.activeCursorSessionId } } }
+  data.qwen = sessionId
+  await (prisma as any).project.update({ where: { id: projectId }, data: { activeCursorSessionId: JSON.stringify(data) } })
+}
+async function getGeminiSessionId(projectId: string): Promise<string | null> {
+  const prisma = await getPrisma()
+  const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+  if (!p?.activeCursorSessionId) return null
+  try { const data = JSON.parse(p.activeCursorSessionId); if (data && typeof data === 'object' && data.gemini) return data.gemini } catch {}
+  return null
+}
+async function setGeminiSessionId(projectId: string, sessionId: string) {
+  const prisma = await getPrisma()
+  const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+  let data: any = {}
+  if (p?.activeCursorSessionId) { try { data = JSON.parse(p.activeCursorSessionId) } catch { data = { cursor: p.activeCursorSessionId } } }
+  data.gemini = sessionId
+  await (prisma as any).project.update({ where: { id: projectId }, data: { activeCursorSessionId: JSON.stringify(data) } })
+}
+
+function mimeFor(p: string) {
+  const s = p.toLowerCase()
+  if (s.endsWith('.png')) return 'image/png'
+  if (s.endsWith('.jpg') || s.endsWith('.jpeg')) return 'image/jpeg'
+  if (s.endsWith('.gif')) return 'image/gif'
+  if (s.endsWith('.webp')) return 'image/webp'
+  if (s.endsWith('.bmp')) return 'image/bmp'
+  return 'application/octet-stream'
 }

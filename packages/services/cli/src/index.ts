@@ -11,6 +11,7 @@ import { startPreview, getStatus } from '@repo/services/preview-runtime'
 import { wsRegistry } from '@repo/ws'
 import { commitAll, hasChanges } from '@repo/services-git'
 import { getAdapter } from './adapters/registry'
+import { ensureGeminiMd, ensureQwenMd } from './provider-docs'
 export { getCliStatusSingle, getAllCliStatus } from './status'
 export { mapUnifiedModel, defaultModel, supportedUnifiedModels } from './model-mapping'
 
@@ -99,6 +100,15 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   const project = await (prisma as any).project.findUnique({ where: { id: projectId } })
   if (!project) throw new Error('Project not found')
   const cliType: string = (req.cli_preference ?? project.preferredCli ?? 'claude') as string
+  // Before first message, ensure provider-specific prompt docs exist at repo root
+  if (req.is_initial_prompt && project.repoPath) {
+    try {
+      const repoRoot = project.repoPath as string
+      const t = (cliType || '').toLowerCase()
+      if (t === 'gemini') await ensureGeminiMd(repoRoot)
+      if (t === 'qwen') await ensureQwenMd(repoRoot)
+    } catch {}
+  }
   const session = await createSession(prisma as any, projectId, cliType, req.instruction)
   const conversationId = req.conversation_id ?? ((globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID())
 
@@ -109,8 +119,45 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
       : { type: 'act_start', data: { session_id: session.id, instruction: req.instruction, request_id: req.request_id || null } }
   ) as any)
 
-  // Append user message
-  const userMessage = await appendMessage(prisma as any, projectId, 'user', req.instruction, conversationId, session.id, { messageType: 'user', metadata: req.is_initial_prompt ? { is_initial_prompt: true } : undefined })
+  // Build user message content with image path references (FastAPI parity)
+  const images = Array.isArray(req.images) ? req.images : []
+  const imagePaths: string[] = []
+  const attachments: Array<{ name: string; url: string }> = []
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const img: any = images[i] || {}
+      const p: string | undefined = img.path
+      const n: string | undefined = img.name
+      if (p) {
+        imagePaths.push(p)
+        try {
+          const filename = (p.split('/').pop() || '').trim()
+          if (filename) attachments.push({ name: n || filename, url: `/api/assets/${projectId}/${filename}` })
+        } catch {}
+      } else if (n) {
+        imagePaths.push(n)
+      }
+    }
+  } catch {}
+
+  let userContent = req.instruction
+  if (imagePaths.length) {
+    const refs = imagePaths.map((p, idx) => `Image #${idx + 1} path: ${p}`).join('\n')
+    userContent = `${req.instruction}\n\n${refs}`
+  }
+
+  const userMeta: any = {
+    type: mode === 'act' ? 'act_instruction' : 'chat_instruction',
+    cli_preference: cliType,
+    fallback_enabled: !!req.fallback_enabled,
+    has_images: imagePaths.length > 0,
+    image_paths: imagePaths,
+  }
+  if (attachments.length) userMeta.attachments = attachments
+  if (req.is_initial_prompt) userMeta.is_initial_prompt = true
+
+  // Append user message (with image refs + attachments metadata)
+  const userMessage = await appendMessage(prisma as any, projectId, 'user', userContent, conversationId, session.id, { messageType: 'user', metadata: userMeta })
 
   // Track user request in DB if ID provided
   if (req.request_id) {

@@ -13,4 +13,3 @@ export async function POST(_: Request, ctx: { params: { projectId: string } }) {
   if (!res.success) return NextResponse.json({ success: false, message: res.message }, { status: 500 })
   return NextResponse.json({ success: true, deployment_url: res.deployment?.url, deployment_id: res.deployment?.id, status: res.deployment?.state || 'CREATED', message: 'Deployment created' })
 }
-

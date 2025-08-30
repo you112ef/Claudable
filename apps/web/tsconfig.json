@@ -18,6 +18,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@repo/*": [
+        "../../packages/*/src",
+        "../../packages/*",
+        "../../packages/services/*/src",
+        "../../packages/services/*"
       ]
     },
     "resolveJsonModule": true,

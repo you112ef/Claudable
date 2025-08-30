@@ -4,7 +4,9 @@
   "private": true,
   "description": "CC Lovable Development Environment",
   "workspaces": [
-    "apps/web"
+    "apps/*",
+    "packages/*",
+    "packages/services/*"
   ],
   "scripts": {
     "dev": "npm run ensure:env && npm run ensure:venv && concurrently --raw \"npm run dev:api\" --prefix \"[WEB] \" \"npm run dev:web\"",

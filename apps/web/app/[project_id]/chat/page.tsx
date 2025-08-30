@@ -206,12 +206,19 @@ export default function ChatPage({ params }: Params) {
   const [currentRoute, setCurrentRoute] = useState<string>('/');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isFileUpdating, setIsFileUpdating] = useState(false);
+  const wsReadyRef = useRef(false);
 
   // Guarded trigger that can be called from multiple places safely
   const triggerInitialPromptIfNeeded = useCallback(() => {
     const initialPromptFromUrl = searchParams?.get('initial_prompt');
     if (!initialPromptFromUrl) return;
     if (initialPromptSentRef.current) return;
+    // Ensure WS is connected to avoid missing early stream events
+    if (!wsReadyRef.current) {
+      // Retry shortly after WS connects
+      setTimeout(() => triggerInitialPromptIfNeeded(), 250);
+      return;
+    }
     // Synchronously guard to prevent double ACT calls
     initialPromptSentRef.current = true;
     setInitialPromptSent(true);
@@ -835,7 +842,7 @@ export default function ChatPage({ params }: Params) {
     try {
       const r = await fetch(`${API_BASE}/api/projects/${projectId}`);
       if (r.ok) {
-        const project = await r.json();
+      const project = await r.json();
         console.log('📋 Loading project info:', {
           preferred_cli: project.preferred_cli,
           selected_model: project.selected_model
@@ -856,42 +863,37 @@ export default function ChatPage({ params }: Params) {
         setUsingGlobalDefaults(followGlobal);
         setProjectDescription(project.description || '');
         
-        // Return project settings for use in loadSettings
-        return {
-          cli: project.preferred_cli,
-          model: project.selected_model
-        };
-        
         // Check if project has initial prompt
         if (project.initial_prompt) {
           setHasInitialPrompt(true);
           localStorage.setItem(`project_${projectId}_hasInitialPrompt`, 'true');
-          // Don't start preview automatically if there's an initial prompt
         } else {
           setHasInitialPrompt(false);
           localStorage.setItem(`project_${projectId}_hasInitialPrompt`, 'false');
         }
 
-        // Check initial project status and handle initial prompt
-        const initialPromptFromUrl = searchParams?.get('initial_prompt');
-        
+        // Handle project status and possible initial prompt trigger
         if (project.status === 'initializing') {
           setProjectStatus('initializing');
           setIsInitializing(true);
-          // initializing 상태면 WebSocket에서 active로 변경될 때까지 대기
+          // WebSocket handler will flip to active and call triggerInitialPromptIfNeeded
         } else {
           setProjectStatus('active');
           setIsInitializing(false);
-          
-          // 프로젝트가 이미 active 상태면 즉시 의존성 설치 시작
+          // Start dependencies if already active
           startDependencyInstallation();
-          
-          // Initial prompt: trigger once with shared guard (handles active-on-load case)
+          // Trigger initial prompt only when provided via URL param
           triggerInitialPromptIfNeeded();
         }
-        
+
         // Always load the file tree after getting project info
         await loadTree('.')
+
+        // Return project settings for use in loadSettings
+        return {
+          cli: project.preferred_cli,
+          model: project.selected_model
+        };
       } else {
         // If API fails, use a fallback name
         setProjectName(`Project ${projectId.slice(0, 8)}`);
@@ -951,7 +953,7 @@ export default function ChatPage({ params }: Params) {
     });
   };
 
-  async function runAct(messageOverride?: string, externalImages?: any[]) {
+  async function runAct(messageOverride?: string, externalImages?: any[], opts?: { isInitial?: boolean }) {
     let finalMessage = messageOverride || prompt;
     const imagesToUse = externalImages || uploadedImages;
     if (!finalMessage.trim() && imagesToUse.length === 0) {
@@ -959,8 +961,8 @@ export default function ChatPage({ params }: Params) {
       return;
     }
     
-    // Chat Mode일 때 추가 지시사항 추가
-    if (mode === 'chat') {
+    // Chat Mode일 때 추가 지시사항 추가 (initial prompt는 제외)
+    if (mode === 'chat' && !opts?.isInitial) {
       finalMessage = finalMessage + "\n\nDo not modify code, only answer to the user's request.";
     }
     
@@ -1000,7 +1002,7 @@ export default function ChatPage({ params }: Params) {
       const requestBody = { 
         instruction: finalMessage, 
         images: processedImages,
-        is_initial_prompt: false, // Mark as continuation message
+        is_initial_prompt: !!opts?.isInitial,
         cli_preference: preferredCli, // Add CLI preference
         selected_model: selectedModel, // Add selected model
         request_id: requestId // ★ NEW: request_id 추가
@@ -1064,6 +1066,19 @@ export default function ChatPage({ params }: Params) {
       setInitializationMessage(message);
     }
     
+    // Handle preview events propagated from WS
+    if (status === 'preview_success' && message) {
+      setPreviewUrl(message);
+      setIsStartingPreview(false);
+      setPreviewInitializationMessage('Preview ready!');
+      return;
+    }
+    if (status === 'preview_error' && message) {
+      setIsStartingPreview(false);
+      setPreviewInitializationMessage(message);
+      return;
+    }
+
     // If project becomes active, stop showing loading UI
     if (status === 'active') {
       setIsInitializing(false);
@@ -1075,7 +1090,7 @@ export default function ChatPage({ params }: Params) {
         startDependencyInstallation();
       }
       
-      // Initial prompt: trigger once with shared guard (handles active-via-WS case)
+      // Initial prompt: trigger only if URL contains it (active-via-WS case)
       triggerInitialPromptIfNeeded();
     } else if (status === 'failed') {
       setIsInitializing(false);
@@ -1113,39 +1128,24 @@ export default function ChatPage({ params }: Params) {
     setAgentWorkComplete(false);
     localStorage.setItem(`project_${projectId}_taskComplete`, 'false');
     
-    // ★ NEW: request_id 생성
-    const requestId = crypto.randomUUID();
-    
-    // No need to add project structure info here - backend will add it for the AI agent
-    
     try {
       setIsRunning(true);
       setInitialPromptSent(true); // 전송 시작 시점에 바로 설정
       
-      const requestBody = { 
-        instruction: initialPrompt,
-        images: [], // No images for initial prompt
-        is_initial_prompt: true, // Mark as initial prompt
-        request_id: requestId // ★ NEW: request_id 추가
-      };
-      
-      const r = await fetch(`${API_BASE}/api/chat/${projectId}/act`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(requestBody) 
-      });
-      
-      if (!r.ok) {
-        const errorText = await r.text();
-        console.error('❌ API Error:', errorText);
-        setInitialPromptSent(false); // 실패하면 다시 시도할 수 있도록
-        return;
-      }
-      
-      const result = await r.json();
-      
-      // ★ NEW: UserRequest 생성 (display original prompt, not enhanced)
-      createRequest(requestId, result.session_id, initialPrompt, 'act');
+      // Load any pre-uploaded image paths passed via sessionStorage
+      let imagesForInit: any[] = [];
+      try {
+        const raw = sessionStorage.getItem(`init_images_${projectId}`);
+        if (raw) {
+          imagesForInit = JSON.parse(raw);
+        }
+      } catch {}
+
+      // 초기 프롬프트도 runAct 경로로 통일하여 상태/요청 관리 일관화
+      await runAct(initialPrompt, imagesForInit, { isInitial: true });
+      try { localStorage.setItem(`project_${projectId}_initialSent`, 'true') } catch {}
+      // Clear stored init images after dispatch
+      try { sessionStorage.removeItem(`init_images_${projectId}`); } catch {}
       
       // Clear the prompt input after sending
       setPrompt('');
@@ -1188,12 +1188,17 @@ export default function ChatPage({ params }: Params) {
     if (typeof window !== 'undefined' && projectId) {
       const storedHasInitialPrompt = localStorage.getItem(`project_${projectId}_hasInitialPrompt`);
       const storedTaskComplete = localStorage.getItem(`project_${projectId}_taskComplete`);
+      const storedInitialSent = localStorage.getItem(`project_${projectId}_initialSent`);
       
       if (storedHasInitialPrompt !== null) {
         setHasInitialPrompt(storedHasInitialPrompt === 'true');
       }
       if (storedTaskComplete !== null) {
         setAgentWorkComplete(storedTaskComplete === 'true');
+      }
+      if (storedInitialSent === 'true') {
+        initialPromptSentRef.current = true;
+        setInitialPromptSent(true);
       }
     }
   }, [projectId]);
@@ -1465,6 +1470,8 @@ export default function ChatPage({ params }: Params) {
                 onProjectStatusUpdate={handleProjectStatusUpdate}
                 startRequest={startRequest}
                 completeRequest={completeRequest}
+                onWebSocketConnect={() => { wsReadyRef.current = true; triggerInitialPromptIfNeeded(); }}
+                onWebSocketDisconnect={() => { wsReadyRef.current = false; }}
               />
             </div>
             
@@ -1475,7 +1482,7 @@ export default function ChatPage({ params }: Params) {
                   // Pass images to runAct
                   runAct(message, images);
                 }}
-                disabled={isRunning}
+                disabled={isRunning || isInitializing}
                 placeholder={mode === 'act' ? "Ask Claudable..." : "Chat with Claudable..."}
                 mode={mode}
                 onModeChange={setMode}

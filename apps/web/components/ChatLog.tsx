@@ -137,9 +137,11 @@ interface ChatLogProps {
   onProjectStatusUpdate?: (status: string, message?: string) => void;
   startRequest?: (requestId: string) => void;
   completeRequest?: (requestId: string, isSuccessful: boolean, errorMessage?: string) => void;
+  onWebSocketConnect?: () => void;
+  onWebSocketDisconnect?: () => void;
 }
 
-export default function ChatLog({ projectId, onSessionStatusChange, onProjectStatusUpdate, startRequest, completeRequest }: ChatLogProps) {
+export default function ChatLog({ projectId, onSessionStatusChange, onProjectStatusUpdate, startRequest, completeRequest, onWebSocketConnect, onWebSocketDisconnect }: ChatLogProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
@@ -148,6 +150,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const activeCheckRef = useRef<NodeJS.Timeout | null>(null);
 
   // Use the centralized WebSocket hook
   const { isConnected } = useWebSocket({
@@ -171,6 +174,11 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         setIsWaitingForResponse(false);
       }
       
+      // Receiving WS messages means fallback polling is unnecessary
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       setMessages(prev => {
         const exists = prev.some(msg => msg.id === chatMessage.id);
         if (exists) {
@@ -179,11 +187,21 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         return [...prev, chatMessage];
       });
     },
-    onStatus: (status, data) => {
+    onStatus: async (status, data) => {
       
       // Handle project status updates
       if (status === 'project_status' && data) {
         onProjectStatusUpdate?.(data.status, data.message);
+      }
+
+      // Forward preview events to parent for URL updates
+      if (status === 'preview_success') {
+        const url = data?.url || data?.data?.url
+        onProjectStatusUpdate?.('preview_success', url);
+      }
+      if (status === 'preview_error') {
+        const msg = data?.message || data?.data?.message
+        onProjectStatusUpdate?.('preview_error', msg);
       }
       
       // Handle session completion
@@ -194,7 +212,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         
         // ★ NEW: Request 완료 처리
         if (data?.request_id && completeRequest) {
-          const isSuccessful = data?.status === 'completed';
+          const isSuccessful = data?.status === 'completed' || data?.status === 'ok';
           completeRequest(data.request_id, isSuccessful, data?.error);
         }
         
@@ -202,6 +220,9 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
         }
+
+        // Final refresh to ensure latest streamed messages are present
+        try { await loadChatHistory(); } catch {}
       }
       
       // Handle session start
@@ -212,11 +233,23 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         if (data?.request_id && startRequest) {
           startRequest(data.request_id);
         }
+        // Start fallback polling only if WS is not connected
+        if (!isConnected) {
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          pollIntervalRef.current = setInterval(async () => {
+            try { await loadChatHistory(); } catch {}
+          }, 1500);
+        }
       }
     },
     onConnect: () => {
+      onWebSocketConnect?.();
     },
     onDisconnect: () => {
+      onWebSocketDisconnect?.();
     },
     onError: (error) => {
       console.error('🔌 [WebSocket] Error:', error);
@@ -224,7 +257,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   });
 
   const scrollToBottom = () => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const behavior: ScrollBehavior = isWaitingForResponse ? 'auto' : 'smooth'
+    logsEndRef.current?.scrollIntoView({ behavior });
   };
 
   // Function to detect tool usage messages based on patterns
@@ -249,32 +283,22 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
 
   // Check for active session on component mount
   const checkActiveSession = async () => {
-    // NOTE: Active session endpoint doesn't exist in backend
-    // Session management is handled through WebSocket
+    try {
+      const response = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
+      if (response.ok) {
+        const sessionData: ActiveSession = await response.json();
+        if (sessionData && sessionData.status === 'active' && sessionData.session_id) {
+          setActiveSession(sessionData);
+          onSessionStatusChange?.(true);
+          startSessionPolling(sessionData.session_id);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check active session:', error);
+    }
     setActiveSession(null);
     onSessionStatusChange?.(false);
-    
-    // Commented out problematic API call that causes 404 errors
-    // try {
-    //   const response = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
-    //   if (response.ok) {
-    //     const sessionData: ActiveSession = await response.json();
-    //     setActiveSession(sessionData);
-    //     
-    //     if (sessionData.status === 'active') {
-    //       console.log('Found active session:', sessionData.session_id);
-    //       onSessionStatusChange?.(true);
-    //       
-    //       // Start polling session status
-    //       startSessionPolling(sessionData.session_id!);
-    //     } else {
-    //       onSessionStatusChange?.(false);
-    //     }
-    //   }
-    // } catch (error) {
-    //   console.error('Failed to check active session:', error);
-    //   onSessionStatusChange?.(false);
-    // }
   };
 
   // Poll session status periodically
@@ -289,6 +313,9 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         if (response.ok) {
           const sessionStatus = await response.json();
           
+          // Opportunistically refresh chat history while the session is active
+          try { await loadChatHistory(); } catch {}
+
           if (sessionStatus.status !== 'active') {
             setActiveSession(null);
             onSessionStatusChange?.(false);
@@ -344,6 +371,37 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
+      }
+      if (activeCheckRef.current) {
+        clearInterval(activeCheckRef.current);
+        activeCheckRef.current = null;
+      }
+    };
+  }, [projectId]);
+
+  // Opportunistic active session detector (covers missing WS start event)
+  useEffect(() => {
+    if (!projectId) return;
+    if (activeCheckRef.current) return; // already running
+    activeCheckRef.current = setInterval(async () => {
+      try {
+        // If already polling a known session, skip
+        if (pollIntervalRef.current) return;
+        const res = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
+        if (res.ok) {
+          const data: ActiveSession = await res.json();
+          if (data && data.status === 'active' && data.session_id) {
+            setActiveSession(data);
+            onSessionStatusChange?.(true);
+            startSessionPolling(data.session_id);
+          }
+        }
+      } catch {}
+    }, 2000);
+    return () => {
+      if (activeCheckRef.current) {
+        clearInterval(activeCheckRef.current);
+        activeCheckRef.current = null;
       }
     };
   }, [projectId]);
@@ -804,10 +862,10 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         
         <AnimatePresence>
           {/* Render chat messages */}
-          {messages.filter(shouldDisplayMessage).map((message, index) => {
+          {messages.filter(shouldDisplayMessage).map((message) => {
             
             return (
-              <div className="mb-4" key={`message-${message.id}-${index}`}>
+              <div className="mb-4" key={`message-${message.id}`}>
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -841,14 +899,12 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
                               {(() => {
                                 // Use attachments from metadata if available, otherwise fallback to parsed paths
                                 const attachments = message.metadata_json?.attachments || [];
-                                console.log('🖼️ Message metadata:', message.metadata_json);
-                                console.log('🖼️ Attachments found:', attachments);
+                                // Avoid noisy console logs in production which can cause jank
                                 if (attachments.length > 0) {
                                   return (
                                     <div className="mt-2 flex flex-wrap gap-2">
                                       {attachments.map((attachment: any, idx: number) => {
                                         const imageUrl = `${API_BASE}${attachment.url}`;
-                                        console.log('🔗 Image URL:', imageUrl, 'for attachment:', attachment);
                                         return (
                                         <div key={idx} className="relative group">
                                           <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
@@ -948,8 +1004,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
             // Hide internal tool results and system logs
             const hideTypes = ['tool_result', 'tool_start', 'system'];
             return !hideTypes.includes(log.type);
-          }).map((log, index) => (
-            <div key={`log-${log.id}-${index}`} className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>
+          }).map((log) => (
+            <div key={`log-${log.id}`} className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

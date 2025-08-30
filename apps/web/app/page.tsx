@@ -517,70 +517,50 @@ export default function HomePage() {
       }
       
       const project = await response.json();
-      
-      // Upload images if any
-      let finalPrompt = prompt.trim();
-      let imageData: any[] = [];
-      
+
+      // 이미지가 있다면 서버에 업로드 후, 경로 정보를 세션 스토리지에 저장해
+      // 채팅 화면에서 초기 프롬프트와 함께 전달되도록 합니다.
       if (uploadedImages.length > 0) {
         try {
-          const uploadedPaths = [];
-          
+          const imageData: any[] = [];
           for (let i = 0; i < uploadedImages.length; i++) {
             const image = uploadedImages[i];
             if (!image.file) continue;
-            
             const formData = new FormData();
             formData.append('file', image.file);
-
-            const uploadResponse = await fetchAPI(`${API_BASE}/api/assets/${project.id}/upload`, {
-              method: 'POST',
-              body: formData
-            });
-
+            const uploadResponse = await fetchAPI(`${API_BASE}/api/assets/${project.id}/upload`, { method: 'POST', body: formData });
             if (uploadResponse.ok) {
               const result = await uploadResponse.json();
-              // Use absolute path so AI can read the file with Read tool
-              uploadedPaths.push(`Image #${i + 1} path: ${result.absolute_path}`);
-              
-              // Track image data for API
-              imageData.push({
-                name: result.filename || image.name,
-                path: result.absolute_path
-              });
+              imageData.push({ name: result.filename || image.name, path: result.absolute_path });
             }
           }
-          
-          if (uploadedPaths.length > 0) {
-            finalPrompt = finalPrompt ? `${finalPrompt}\n\n${uploadedPaths.join('\n')}` : uploadedPaths.join('\n');
+          if (imageData.length) {
+            try { sessionStorage.setItem(`init_images_${project.id}`, JSON.stringify(imageData)); } catch {}
           }
         } catch (uploadError) {
           console.error('Image upload failed:', uploadError);
           showToast('Images could not be uploaded, but project was created', 'error');
         }
       }
-      
-      // Execute initial prompt directly with images
-      if (finalPrompt.trim()) {
-        try {
-          const actResponse = await fetchAPI(`${API_BASE}/api/chat/${project.id}/act`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              instruction: prompt.trim(), // Original prompt without image paths
-              images: imageData,
-              is_initial_prompt: true,
-              cli_preference: selectedAssistant
-            })
-          });
-          
-          if (actResponse.ok) {
-            console.log('✅ ACT started successfully with images:', imageData);
-          } else {
-            console.error('❌ ACT failed:', await actResponse.text());
+
+      // 초기 프롬프트는 프로젝트 초기화 완료 후 채팅 화면에서 자동 전송합니다.
+      // 기존 방식대로: 프로젝트가 active가 된 다음에 챗 화면으로 이동
+      const initial = encodeURIComponent(prompt.trim());
+
+      // Poll project status until it becomes 'active' (with timeout)
+      const startTime = Date.now();
+      const timeoutMs = 60_000; // 60 seconds
+      const pollIntervalMs = 800;
+      let status: string | null = null;
+      try {
+        while (Date.now() - startTime < timeoutMs) {
+          const stRes = await fetchAPI(`${API_BASE}/api/projects/${project.id}`);
+          if (stRes.ok) {
+            const st = await stRes.json();
+            status = st.status;
+            if (status === 'active') break;
           }
-        } catch (actError) {
-          console.error('❌ ACT API error:', actError);
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
         }
       }
       
@@ -1001,7 +981,7 @@ export default function HomePage() {
 
             {/* Main Input Form */}
             <form 
-              onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
+              onSubmit={(e) => { e.preventDefault(); if (isCreatingProject) return; handleSubmit(); }}
               onDragEnter={handleDragEnter}
               onDragLeave={handleDragLeave}
               onDragOver={handleDragOver}
@@ -1021,6 +1001,7 @@ export default function HomePage() {
                   className="flex w-full rounded-md px-2 py-2 placeholder:text-gray-400 dark:placeholder:text-white/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 resize-none text-[16px] leading-snug md:text-base focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent focus:bg-transparent flex-1 text-gray-900 dark:text-white overflow-y-auto"
                   style={{ height: '120px' }}
                   onKeyDown={(e) => {
+                    if (isCreatingProject) { e.preventDefault(); return }
                     if (e.key === 'Enter') {
                       if (e.metaKey || e.ctrlKey) {
                         e.preventDefault();

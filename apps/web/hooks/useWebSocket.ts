@@ -42,6 +42,14 @@ export function useWebSocket({
     try {
       const wsBase = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
       const fullUrl = `${wsBase}/api/chat/${projectId}`;
+
+      // Ensure the Next.js server has attached the WebSocketServer by
+      // triggering the HTTP handler once before upgrading to WS.
+      // We intentionally don't block on errors here.
+      try {
+        fetch(`/api/chat/${projectId}`).catch(() => {});
+      } catch {}
+
       const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {
@@ -65,10 +73,10 @@ export function useWebSocket({
           
           if (data.type === 'message' && onMessage && data.data) {
             onMessage(data.data);
-          } else if (data.type === 'preview_error' && onMessage) {
-            onMessage(data);
-          } else if (data.type === 'preview_success' && onMessage) {
-            onMessage(data);
+          } else if (data.type === 'preview_error' && onStatus) {
+            onStatus('preview_error', data);
+          } else if (data.type === 'preview_success' && onStatus) {
+            onStatus('preview_success', data);
           } else if ((data.type === 'project_status' || data.type === 'status') && onStatus) {
             onStatus('project_status', data.data || { status: data.status, message: data.message });
           } else if (data.type === 'act_start' && onStatus) {

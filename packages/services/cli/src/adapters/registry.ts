@@ -19,6 +19,88 @@ export interface CLIAdapter {
   executeWithStreaming(opts: ExecuteOptions): AsyncGenerator<AdapterEvent, void, void>
 }
 
+class CodexAdapter implements CLIAdapter {
+  name = 'codex'
+  async checkAvailability() {
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn('codex', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let done = false
+      child.on('error', () => { if (!done) { done = true; resolve(false) } })
+      child.on('close', (code) => { if (!done) { done = true; resolve(code === 0) } })
+      setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch {}; resolve(false) } }, 1500)
+    })
+    return { available: ok, configured: ok, default_models: ['gpt-5'] }
+  }
+  async *executeWithStreaming(opts: ExecuteOptions): AsyncGenerator<AdapterEvent> {
+    // Run codex in stream-json mode and parse NDJSON events
+    const args = ['agent', 'stream-json']
+    const child = spawn('codex', args, { cwd: opts.projectPath || process.cwd(), stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env } })
+    let stderrBuf = ''
+    child.stderr.on('data', (d) => { stderrBuf += String(d) })
+    // Prime instruction to stdin if supported (fallback: write as plain text)
+    try {
+      child.stdin?.write(String(opts.instruction || '').trim() + '\n')
+    } catch {}
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const onLine = async function*(line: string): AsyncGenerator<AdapterEvent> {
+      const t = line.trim()
+      if (!t) return
+      try {
+        const evt = JSON.parse(t)
+        // Normalize known event shapes
+        const type = evt.type || evt.event || ''
+        if (type === 'message' || type === 'chat' || evt.role === 'assistant') {
+          const content = evt.content || evt.text || evt.message || ''
+          yield { kind: 'message', content, role: 'assistant', messageType: 'chat', metadata: evt }
+        } else if (type === 'tool_result' || type === 'tool' || type === 'log') {
+          const text = evt.summary || evt.text || JSON.stringify(evt)
+          yield { kind: 'output', text }
+        } else if (type === 'result' || type === 'done' || type === 'complete') {
+          const success = evt.success !== false && evt.status !== 'error'
+          yield { kind: 'result', success, error: evt.error || null }
+        } else if (type === 'error') {
+          yield { kind: 'message', content: String(evt.error || evt.message || 'Error'), role: 'system', messageType: 'error', metadata: evt }
+          yield { kind: 'result', success: false, error: String(evt.error || 'error') }
+        } else {
+          // Unknown JSON event -> surface as output
+          yield { kind: 'output', text: t }
+        }
+      } catch {
+        // Not JSON -> emit as raw output
+        yield { kind: 'output', text: t }
+      }
+    }
+
+    const stream = child.stdout
+    const reader = stream
+    const self = this
+    const gen = (async function* () {
+      yield { kind: 'output', text: '▶ CODEX starting...' }
+      for await (const chunk of reader) {
+        buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk as any)
+        let idx
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 1)
+          yield* onLine(line)
+        }
+      }
+      // Flush any remaining buffer
+      if (buffer.trim()) yield* onLine(buffer)
+      const code = child.exitCode
+      if (code !== 0) {
+        yield { kind: 'result', success: false, error: stderrBuf.trim() || `codex exited with ${code}` }
+      } else {
+        yield { kind: 'result', success: true }
+      }
+    })()
+    // yield* the inner generator
+    for await (const ev of gen) yield ev
+  }
+}
+
 class SimulatedAdapter implements CLIAdapter {
   name: string
   constructor(name: string) { this.name = name }
@@ -64,6 +146,6 @@ class SimulatedAdapter implements CLIAdapter {
 export function getAdapter(cliType: string): CLIAdapter {
   // For now, map known aliases to simulated adapters. This keeps streaming path intact.
   const name = (cliType || 'claude').toLowerCase()
+  if (name === 'codex') return new CodexAdapter()
   return new SimulatedAdapter(name)
 }
-

@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { getPrisma } from '@repo/db'
 import { wsRegistry } from '@repo/ws'
-import { commitAll, hasChanges } from '@repo/services-git' 
+import { commitAll, hasChanges } from '@repo/services-git'
+import { getAdapter } from './adapters/registry'
 
 export const ActRequestSchema = z.object({
   instruction: z.string().min(1),
@@ -19,6 +20,7 @@ export const ActRequestSchema = z.object({
     )
     .optional(),
   is_initial_prompt: z.boolean().optional(),
+  request_id: z.string().optional(),
 })
 
 export type ActRequest = z.infer<typeof ActRequestSchema>
@@ -45,14 +47,41 @@ async function completeSession(prisma: any, sessionId: string, success: boolean)
   await prisma.session.update({ where: { id: sessionId }, data: { status: success ? 'completed' : 'failed', completedAt: new Date() } })
 }
 
-async function appendMessage(prisma: any, projectId: string, role: string, content: string, conversationId?: string | null, sessionId?: string | null) {
+async function appendMessage(prisma: any, projectId: string, role: string, content: string, conversationId?: string | null, sessionId?: string | null, opts?: { messageType?: string; metadata?: any; parentMessageId?: string | null; cliSource?: string | null }) {
   const id = (globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID()
-  return prisma.message.create({ data: { id, projectId, role, content, conversationId: conversationId ?? null, sessionId: sessionId ?? null } })
+  return prisma.message.create({ data: { id, projectId, role, content, conversationId: conversationId ?? null, sessionId: sessionId ?? null, messageType: opts?.messageType ?? null, metadataJson: opts?.metadata ? JSON.stringify(opts.metadata) : null, parentMessageId: opts?.parentMessageId ?? null, cliSource: opts?.cliSource ?? null } })
 }
 
-async function runAdapter(_: { projectId: string; instruction: string; cliType: string; mode: 'act' | 'chat' }): Promise<ExecResult> {
-  // Placeholder adapter execution: report unavailable
-  return { success: false, error: `CLI '${_.cliType}' is not configured`, assistantMessage: null, changesDetected: false }
+async function runAdapter(_: { projectId: string; instruction: string; cliType: string; mode: 'act' | 'chat'; projectRepo: string | null; conversationId: string; sessionId: string; isInitial?: boolean; images?: any[] }): Promise<ExecResult> {
+  const adapter = getAdapter(_.cliType)
+  // Attach simple streaming to WS as cli_output and persist assistant messages
+  const prisma = await getPrisma()
+  let lastAssistantMessageId: string | null = null
+  let changesDetected = false
+  try {
+    for await (const ev of adapter.executeWithStreaming({
+      instruction: _.instruction,
+      projectPath: _.projectRepo || undefined,
+      sessionId: _.sessionId,
+      isInitialPrompt: !!_.isInitial,
+      images: _.images || [],
+    })) {
+      if (ev.kind === 'output') {
+        wsRegistry.broadcast(_.projectId, { type: 'cli_output', output: ev.text, cli_type: _.cliType } as any)
+      } else if (ev.kind === 'message') {
+        const m = await appendMessage(prisma as any, _.projectId, ev.role || 'assistant', ev.content || '', _.conversationId, _.sessionId, { messageType: ev.messageType || 'chat', metadata: ev.metadata || null, parentMessageId: ev.parentMessageId || null, cliSource: _.cliType })
+        lastAssistantMessageId = m.id
+        wsRegistry.broadcast(_.projectId, { type: 'message', data: { id: m.id, role: m.role, message_type: m.messageType ?? null, content: m.content, metadata_json: ev.metadata || null, parent_message_id: m.parentMessageId ?? null, session_id: m.sessionId ?? null, conversation_id: m.conversationId ?? null, cli_source: m.cliSource ?? null, created_at: m.createdAt }, timestamp: new Date().toISOString() } as any)
+        if (ev.metadata && ev.metadata.changes_made) changesDetected = true
+      } else if (ev.kind === 'result') {
+        return { success: !!ev.success, error: ev.error || null, assistantMessage: null, changesDetected }
+      }
+    }
+    // Fallback in case adapter finished without explicit result
+    return { success: true, assistantMessage: null, changesDetected }
+  } catch (e: any) {
+    return { success: false, error: e?.message || String(e), assistantMessage: null, changesDetected }
+  }
 }
 
 export async function executeInstruction(projectId: string, req: ActRequest, mode: 'act' | 'chat') {
@@ -67,15 +96,44 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   wsRegistry.broadcast(projectId, (
     mode === 'chat'
       ? { type: 'chat_start', data: { session_id: session.id, instruction: req.instruction } }
-      : { type: 'act_start', data: { session_id: session.id, instruction: req.instruction, request_id: conversationId } }
+      : { type: 'act_start', data: { session_id: session.id, instruction: req.instruction, request_id: req.request_id || null } }
   ) as any)
 
   // Append user message
-  await appendMessage(prisma as any, projectId, 'user', req.instruction, conversationId, session.id)
+  const userMessage = await appendMessage(prisma as any, projectId, 'user', req.instruction, conversationId, session.id, { messageType: 'user', metadata: req.is_initial_prompt ? { is_initial_prompt: true } : undefined })
+
+  // Track user request in DB if ID provided
+  if (req.request_id) {
+    try {
+      const urId = req.request_id
+      await (prisma as any).userRequest.create({
+        data: {
+          id: urId,
+          projectId,
+          userMessageId: userMessage.id,
+          sessionId: session.id,
+          instruction: req.instruction,
+          requestType: mode,
+          isCompleted: false,
+          createdAt: new Date(),
+        },
+      })
+    } catch {}
+  }
 
   let result: ExecResult
   try {
-    result = await runAdapter({ projectId, instruction: req.instruction, cliType, mode })
+    result = await runAdapter({
+      projectId,
+      instruction: req.instruction,
+      cliType,
+      mode,
+      projectRepo: project.repoPath || null,
+      conversationId,
+      sessionId: session.id,
+      isInitial: !!req.is_initial_prompt,
+      images: req.images || [],
+    })
   } catch (e: any) {
     result = { success: false, error: e?.message || 'Execution failed' }
   }
@@ -85,17 +143,32 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
     wsRegistry.broadcast(projectId, { type: 'message', data: { id: m.id, role: 'assistant', content: m.content, session_id: session.id, conversation_id: conversationId, created_at: m.createdAt }, timestamp: new Date().toISOString() } as any)
   }
 
-  
   // Optional commit on success for ACT mode
   if (mode === 'act' && result.success) {
     const repo = project.repoPath as string | null
     if (repo) {
       try {
         if (await hasChanges(repo)) {
-          const commitRes = await commitAll(repo, 'chore(act): apply changes')
+          const commitMessage = `916 ${cliType}: ${req.instruction.slice(0, 100)}`
+          const commitRes = await commitAll(repo, commitMessage)
           if (!commitRes.success) {
             // emit an error as cli_output
             wsRegistry.broadcast(projectId, { type: 'cli_output', output: `Commit failed: ${commitRes.error}`, cli_type: cliType } as any)
+          } else if (commitRes.commit_hash) {
+            try {
+              await (prisma as any).commit.create({
+                data: {
+                  id: ((globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID()),
+                  projectId,
+                  sessionId: session.id,
+                  commitSha: commitRes.commit_hash,
+                  message: commitMessage,
+                  authorType: 'ai',
+                  authorName: 'AI Assistant',
+                  committedAt: new Date(),
+                },
+              })
+            } catch {}
           }
         }
       } catch (e: any) {
@@ -105,6 +178,16 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   }
 
   await completeSession(prisma as any, session.id, !!result.success)
+
+  // Mark user request completion
+  if (req.request_id) {
+    try {
+      await (prisma as any).userRequest.update({
+        where: { id: req.request_id },
+        data: { isCompleted: true, isSuccessful: !!result.success, completedAt: new Date() },
+      })
+    } catch {}
+  }
 
 
   // Broadcast complete

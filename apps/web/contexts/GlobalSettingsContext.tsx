@@ -30,7 +30,7 @@ export function useGlobalSettings() {
 }
 
 export default function GlobalSettingsProvider({ children }: { children: React.ReactNode }) {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
   const [settings, setSettings] = useState<GlobalAISettings>(defaultSettings);
 
   const refresh = useCallback(async () => {
@@ -54,4 +54,3 @@ export default function GlobalSettingsProvider({ children }: { children: React.R
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
-

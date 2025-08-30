@@ -1,8 +1,9 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
+import { listActiveMonitoring } from '@repo/services-vercel'
 
 export async function GET() {
-  return NextResponse.json({ detail: 'Not implemented' }, { status: 501 })
+  return NextResponse.json(listActiveMonitoring())
 }
 

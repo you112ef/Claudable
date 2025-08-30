@@ -12,7 +12,11 @@ __pycache__/
 *.egg-info/
 venv/
 env/
+!packages/services/env
+!packages/services/env/
 !packages/services/env/**
+!apps/web/app/api/env
+!apps/web/app/api/env/
 !apps/web/app/api/env/**
 .venv/
 .python-version

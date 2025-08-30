@@ -1,8 +1,18 @@
 import { z } from 'zod'
+// Raise process listener cap to avoid noisy warnings from underlying SDKs
+try {
+  const cur = (process as any).getMaxListeners?.() ?? 10
+  if (typeof (process as any).setMaxListeners === 'function' && cur < 50) {
+    ;(process as any).setMaxListeners(50)
+  }
+} catch {}
 import { getPrisma } from '@repo/db'
+import { startPreview, getStatus } from '@repo/services/preview-runtime'
 import { wsRegistry } from '@repo/ws'
 import { commitAll, hasChanges } from '@repo/services-git'
 import { getAdapter } from './adapters/registry'
+export { getCliStatusSingle, getAllCliStatus } from './status'
+export { mapUnifiedModel, defaultModel, supportedUnifiedModels } from './model-mapping'
 
 export const ActRequestSchema = z.object({
   instruction: z.string().min(1),
@@ -143,6 +153,15 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
     wsRegistry.broadcast(projectId, { type: 'message', data: { id: m.id, role: 'assistant', content: m.content, session_id: session.id, conversation_id: conversationId, created_at: m.createdAt }, timestamp: new Date().toISOString() } as any)
   }
 
+  // If execution failed, persist an error message (parity with Python)
+  if (!result.success) {
+    try {
+      const errText = result.error || 'Execution failed'
+      const em = await appendMessage(prisma as any, projectId, 'assistant', errText, conversationId, session.id, { messageType: 'error', metadata: { type: mode === 'chat' ? 'chat_error' : 'act_error', cli_attempted: cliType } })
+      wsRegistry.broadcast(projectId, { type: 'message', data: { id: em.id, role: em.role, message_type: 'error', content: em.content, metadata_json: { type: mode === 'chat' ? 'chat_error' : 'act_error', cli_attempted: cliType }, session_id: session.id, conversation_id: conversationId, created_at: em.createdAt }, timestamp: new Date().toISOString() } as any)
+    } catch {}
+  }
+
   // Optional commit on success for ACT mode
   if (mode === 'act' && result.success) {
     const repo = project.repoPath as string | null
@@ -174,6 +193,18 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
       } catch (e: any) {
         wsRegistry.broadcast(projectId, { type: 'cli_output', output: `Commit check error: ${e?.message || e}`, cli_type: cliType } as any)
       }
+    }
+    // Auto-start preview server after successful initial prompt (parity with FastAPI)
+    if (req.is_initial_prompt) {
+      try {
+        const repo = project.repoPath as string | null
+        if (repo) {
+          const st = getStatus(projectId)
+          if (!st.running) {
+            await startPreview(projectId, repo)
+          }
+        }
+      } catch {}
     }
   }
 

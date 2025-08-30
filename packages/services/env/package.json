@@ -1,0 +1,11 @@
+{
+  "name": "@repo/services-env",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "fernet": "^0.3.3",
+    "zod": "^3.23.8"
+  }
+}

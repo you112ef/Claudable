@@ -1,13 +1,16 @@
 import { loadSystemPrompt } from '@repo/services-projects'
+import fs from 'node:fs'
+import fsp from 'node:fs/promises'
+import path from 'node:path'
+import { getPrisma } from '@repo/db'
 
-export type ClaudeEvent = any
+type SDKMessage = any
 
 export class ClaudeAdapter {
   name = 'claude'
 
   async checkAvailability() {
     const token = !!process.env.ANTHROPIC_API_KEY
-    // Best-effort CLI check
     let cli = false
     try {
       const { spawn } = await import('node:child_process')
@@ -27,101 +30,129 @@ export class ClaudeAdapter {
     projectPath?: string
     sessionId: string
     isInitialPrompt?: boolean
-    images?: Array<{ name: string; path?: string; base64_data?: string; mime_type?: string }>
+    images?: Array<{ name: string; path?: string; base64_data?: string; mime_type?: string; url?: string }>
     model?: string
   }): AsyncGenerator<{ kind: 'message' | 'output' | 'result'; [k: string]: any }> {
-    const systemPrompt = loadSystemPrompt()
-    const model = process.env.CLAUDE_CODE_MODEL || opts.model || 'claude-sonnet-4-20250514'
-    // Allowed tools per Python adapter
-    const allowedToolsInitial = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch']
-    const allowedToolsNormal = [...allowedToolsInitial, 'TodoWrite']
-    const disallowed = opts.isInitialPrompt ? ['TodoWrite'] : []
-
-    // Attempt TS SDK first
-    let SDK: any = null
+    // Import SDK query api
+    let queryFn: any
     try {
-      try { SDK = await import('@anthropic-ai/claude-code') } catch { SDK = await import('claude-code-sdk') }
-    } catch {}
-
-    if (SDK) {
-      const OptionsCtor = SDK.ClaudeCodeOptions || SDK.ClaudeCodeClient?.Options || SDK.ClaudeCode?.Options
-      const ClientCtor = SDK.ClaudeSDKClient || SDK.ClaudeCodeClient || SDK.ClaudeCode
-      if (!ClientCtor) {
-        yield { kind: 'result', success: false, error: 'Claude SDK module missing Client export' }
+      const mod = await import('@anthropic-ai/claude-code')
+      queryFn = mod.query
+    } catch (e) {
+      try {
+        const mod2 = await import('claude-code-sdk')
+        queryFn = mod2.query
+      } catch {
+        yield { kind: 'message', content: 'Claude SDK (@anthropic-ai/claude-code) not installed', role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
+        yield { kind: 'result', success: false, error: 'Claude SDK not available' }
         return
       }
-      const options = new (OptionsCtor || Object)({
-        system_prompt: systemPrompt,
-        allowed_tools: opts.isInitialPrompt ? allowedToolsInitial : allowedToolsNormal,
-        disallowed_tools: disallowed.length ? disallowed : undefined,
-        permission_mode: 'bypassPermissions',
-        model,
-        continue_conversation: true,
-      })
-      let client: any
-      try {
-        client = await (async () => {
-          if (ClientCtor.prototype && ClientCtor.prototype.receive_messages) {
-            // SDK-style
-            const inst = new ClientCtor({ options })
-            return inst
-          }
-          // Fallback assume constructor(options)
-          return new ClientCtor(options)
-        })()
-      } catch (e: any) {
-        yield { kind: 'result', success: false, error: e?.message || 'Claude SDK init failed' }
-        return
-      }
-      try {
-        if (client.query) await client.query(opts.instruction)
-        // Hidden init
-        yield { kind: 'message', content: `Claude Code SDK initialized (Model: ${model})`, role: 'system', messageType: 'system', metadata: { cli_type: 'claude', mode: 'SDK', hidden_from_ui: true } }
-        // Stream messages
-        const stream = client.receive_messages ? client.receive_messages() : client.stream?.()
-        if (!stream || !stream[Symbol.asyncIterator]) {
-          yield { kind: 'result', success: false, error: 'Claude SDK has no async stream' }
-          return
-        }
-        let buffer = ''
-        for await (const obj of stream) {
-          const t = String(obj?.type || obj?.kind || '')
-          if (t.toLowerCase().includes('assistant')) {
-            // Attempt to collect text blocks
-            let content = ''
-            const blocks = Array.isArray(obj?.content) ? obj.content : []
-            for (const block of blocks) {
-              if (typeof block?.text === 'string') content += block.text
-              if (block?.type === 'text' && block?.text) content += block.text
-            }
-            if (content) yield { kind: 'message', content, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'claude', mode: 'SDK' } }
-          } else if (t.toLowerCase() === 'result' || t.toLowerCase().includes('complete')) {
-            yield { kind: 'message', content: `Session completed`, role: 'system', messageType: 'result', metadata: { cli_type: 'claude', hidden_from_ui: true } }
-            yield { kind: 'result', success: !obj?.is_error }
-            break
-          } else if (t.toLowerCase().includes('system')) {
-            // ignore additional system noise
-          } else {
-            // Tool events are SDK-specific; surface minimal output
-            if (obj?.name || obj?.tool || obj?.tool_name) {
-              yield { kind: 'message', content: `Using tool: ${obj?.name || obj?.tool || obj?.tool_name}`, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'claude' } }
-            }
-          }
-        }
-      } catch (e: any) {
-        yield { kind: 'message', content: `❌ Claude error: ${e?.message || e}`, role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
-        yield { kind: 'result', success: false, error: e?.message || String(e) }
-      } finally {
-        try { if (client?.close) await client.close() } catch {}
-      }
-      return
     }
 
-    // SDK unavailable: emit failure for accuracy (user can install @anthropic-ai/claude-code)
-    yield { kind: 'message', content: 'Claude SDK not available. Please install @anthropic-ai/claude-code and set ANTHROPIC_API_KEY.', role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
-    yield { kind: 'result', success: false, error: 'Claude SDK not available' }
+    const repoCwd = opts.projectPath || process.cwd()
+    const systemPrompt = loadSystemPrompt()
+    const model = process.env.CLAUDE_CODE_MODEL || opts.model
+    const allowedToolsInitial = ['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch']
+    const allowedTools = opts.isInitialPrompt ? allowedToolsInitial : [...allowedToolsInitial, 'TodoWrite']
+    const disallowedTools = opts.isInitialPrompt ? ['TodoWrite'] : undefined
+
+    // Resume session if stored
+    const prisma = await getPrisma()
+    const projectId = projectIdFromPath(repoCwd)
+    const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+    const resumeSession = p?.activeClaudeSessionId || undefined
+
+    // Build prompt: streaming input if images, else direct string
+    const buildUserContent = async () => {
+      const parts: any[] = []
+      let text = opts.instruction
+      if (opts.isInitialPrompt) {
+        // Append static initial project structure (mirroring Python behavior)
+        const initCtx = '\n<initial_context>\n## Project Directory Structure (node_modules are already installed)\n.eslintrc.json\n.gitignore\nnext.config.mjs\nnext-env.d.ts\npackage.json\npostcss.config.mjs\nREADME.md\ntailwind.config.ts\ntsconfig.json\n.env\nsrc/app/favicon.ico\nsrc/app/globals.css\nsrc/app/layout.tsx\nsrc/app/page.tsx\npublic/\nnode_modules/\n</initial_context>'
+        text += initCtx
+      }
+      parts.push({ type: 'text', text })
+      if (opts.images && opts.images.length) {
+        for (const img of opts.images) {
+          let b64 = (img.base64_data || '') as string
+          if (!b64 && img.url && img.url.startsWith('data:')) {
+            try { b64 = img.url.split(',', 1)[1] || '' } catch {}
+          }
+          if (!b64 && img.path) {
+            try { const data = await fsp.readFile(img.path); b64 = data.toString('base64') } catch {}
+          }
+          if (b64) {
+            parts.push({ type: 'image', source: { type: 'base64', media_type: img.mime_type || 'image/png', data: b64 } })
+          }
+        }
+      }
+      return parts
+    }
+
+    const promptIterable = (async function* () {
+      const content = await buildUserContent()
+      yield { type: 'user' as const, message: { role: 'user' as const, content } }
+    })()
+
+    // Create AbortController per query
+    const abortController = new AbortController()
+    const options: any = {
+      cwd: repoCwd,
+      customSystemPrompt: systemPrompt,
+      permissionMode: 'bypassPermissions',
+      allowedTools,
+      disallowedTools,
+      model,
+      continue: !resumeSession,
+      resume: resumeSession,
+      maxTurns: undefined,
+    }
+
+    // Stream messages
+    try {
+      for await (const message of queryFn({ prompt: promptIterable, abortController, options })) {
+        const t = message?.type
+        if (t === 'system' && message?.subtype === 'init') {
+          const sid = message?.session_id
+          if (sid) {
+            try { await (prisma as any).project.update({ where: { id: projectId }, data: { activeClaudeSessionId: sid } }) } catch {}
+          }
+          yield { kind: 'message', content: `Claude initialized (Model: ${message?.model || model || ''})`, role: 'system', messageType: 'system', metadata: { cli_type: 'claude', hidden_from_ui: true, session_id: sid } }
+          continue
+        }
+        if (t === 'assistant') {
+          // Flatten assistant message content
+          let content = ''
+          try {
+            const blocks = Array.isArray(message?.message?.content) ? message.message.content : []
+            for (const block of blocks) {
+              if (block?.type === 'text' && typeof block?.text === 'string') content += block.text
+            }
+          } catch {}
+          if (content) yield { kind: 'message', content, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'claude', mode: 'SDK' } }
+          continue
+        }
+        if (t === 'result') {
+          const isError = !!message?.is_error || (message?.subtype && String(message.subtype).startsWith('error'))
+          // Hidden result system message with metrics
+          yield { kind: 'message', content: `Session completed in ${message?.duration_ms ?? 0}ms`, role: 'system', messageType: 'result', metadata: { cli_type: 'claude', hidden_from_ui: true, duration_ms: message?.duration_ms, duration_api_ms: message?.duration_api_ms, total_cost_usd: message?.total_cost_usd, num_turns: message?.num_turns } }
+          yield { kind: 'result', success: !isError, error: isError ? 'error' : undefined }
+          continue
+        }
+        // Surface other messages minimally
+      }
+    } catch (e: any) {
+      yield { kind: 'message', content: `Claude SDK error: ${e?.message || e}`, role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
+      yield { kind: 'result', success: false, error: e?.message || String(e) }
+    }
   }
 }
 
-export default ClaudeAdapter
+function projectIdFromPath(repoCwd: string): string {
+  const parts = repoCwd.split(path.sep)
+  const repoIdx = parts.lastIndexOf('repo')
+  if (repoIdx > 0) return parts[repoIdx - 1]
+  return parts[parts.length - 1]
+}
 
+export default ClaudeAdapter

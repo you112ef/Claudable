@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "sideEffects": false
+  "sideEffects": false,
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
 }
-

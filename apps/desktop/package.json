@@ -1,0 +1,13 @@
+{
+  "name": "cc-lovable-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "ELECTRON_DISABLE_SECURITY_WARNINGS=1 ELECTRON_START_URL=http://localhost:3000 electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.3.1"
+  }
+}
+

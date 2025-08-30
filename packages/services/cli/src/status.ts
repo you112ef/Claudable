@@ -19,8 +19,8 @@ export async function getCliStatusSingle(cliType: string) {
       return { cli_type: 'codex', available: r.installed, configured: r.installed, models: ['gpt-5', 'gpt-4o', 'gpt-4o-mini'] }
     }
     case 'cursor': {
-      const r = await checkCmd('cursor', ['--version']).catch(() => ({ installed: false }))
-      return { cli_type: 'cursor', available: !!r.installed, configured: !!r.installed, models: ['sonnet-4', 'opus-4.1'] }
+      const r = await checkCmd('cursor-agent', ['-h']).catch(() => ({ installed: false }))
+      return { cli_type: 'cursor', available: !!r.installed, configured: !!r.installed, models: ['gpt-5', 'sonnet-4'] }
     }
     case 'claude': {
       const token = process.env.ANTHROPIC_API_KEY

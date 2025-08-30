@@ -243,6 +243,8 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
     let reconnectTimeout: NodeJS.Timeout | null = null;
 
     const connect = () => {
+      // Pre-initialize WS server by hitting the HTTP handler once
+      try { fetch(`/api/chat/${projectId}`).catch(() => {}); } catch {}
       const ws = new WebSocket(`${WS_BASE}/api/chat/${projectId}`);
       
       ws.onopen = () => {

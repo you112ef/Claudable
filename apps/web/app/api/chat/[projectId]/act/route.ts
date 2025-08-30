@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { ActRequestSchema, executeInstruction } from '@repo/services-cli' 
+import { ActRequestSchema, executeInstruction } from '@repo/services/cli' 
 
 export async function POST(req: Request, ctx: { params: { projectId: string } }) {
   const { projectId } = ctx.params
@@ -16,4 +16,3 @@ export async function POST(req: Request, ctx: { params: { projectId: string } })
     return NextResponse.json({ detail: 'Failed to execute act' }, { status: 500 })
   }
 }
-

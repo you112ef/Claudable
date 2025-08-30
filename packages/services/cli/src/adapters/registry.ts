@@ -143,27 +143,27 @@ class CodexAdapter implements CLIAdapter {
           if (typeof finalMsg === 'string' && finalMsg) agentMessageBuffer = finalMsg
         }
         if (agentMessageBuffer) {
-          yield { kind: 'message', content: agentMessageBuffer, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'codex' } }
+          yield { kind: 'message', content: agentMessageBuffer, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'codex', event_type: 'assistant', original_event: msg } }
           agentMessageBuffer = ''
         }
         return
       }
       if (type === 'exec_command_begin') {
         const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command || '')
-        yield { kind: 'message', content: `Using tool: exec_command ${cmd}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Bash', cli_type: 'codex' } }
+        yield { kind: 'message', content: `Using tool: exec_command ${cmd}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Bash', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'patch_apply_begin') {
-        yield { kind: 'message', content: 'Applying code changes', role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex' } }
+        yield { kind: 'message', content: 'Applying code changes', role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'web_search_begin') {
-        yield { kind: 'message', content: `Using tool: web_search ${msg.query || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'WebSearch', cli_type: 'codex' } }
+        yield { kind: 'message', content: `Using tool: web_search ${msg.query || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'WebSearch', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'mcp_tool_call_begin') {
         const inv = msg.invocation || {}
-        yield { kind: 'message', content: `Using tool: ${inv.server || ''}/${inv.tool || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'MCPTool', cli_type: 'codex' } }
+        yield { kind: 'message', content: `Using tool: ${inv.server || ''}/${inv.tool || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'MCPTool', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'task_complete') {
@@ -259,13 +259,13 @@ class CursorAdapter implements CLIAdapter {
         const toolName = rawName.replace('ToolCall', '')
         if (subtype === 'started') {
           const args = toolCall[rawName]?.args || {}
-          yield { kind: 'message', content: summarizeTool(toolName, args), role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, cli_type: 'cursor', original_event: evt } }
+          yield { kind: 'message', content: summarizeTool(toolName, args), role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, cli_type: 'cursor', event_type: 'tool_call', original_event: evt } }
           return
         }
         if (subtype === 'completed') {
           const result = toolCall[rawName]?.result || {}
           const content = 'success' in result ? JSON.stringify(result.success) : ('error' in result ? JSON.stringify(result.error) : '')
-          yield { kind: 'message', content, role: 'system', messageType: 'tool_result', metadata: { hidden_from_ui: true, cli_type: 'cursor', original_format: evt } }
+          yield { kind: 'message', content, role: 'system', messageType: 'tool_result', metadata: { hidden_from_ui: true, cli_type: 'cursor', event_type: 'tool_result', original_event: evt } }
           return
         }
       }
@@ -342,7 +342,18 @@ class QwenAdapter implements CLIAdapter {
     // Ensure session
     let sessionId: string | null = await getQwenSessionId(projectId)
     if (!sessionId) {
-      try { const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] }); sessionId = res?.sessionId || null; if (sessionId) await setQwenSessionId(projectId, sessionId) } catch (e) {}
+      try {
+        const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] })
+        sessionId = res?.sessionId || null
+      } catch (e) {
+        const method = process.env.QWEN_AUTH_METHOD || 'qwen-oauth'
+        try {
+          await client.request('authenticate', { methodId: method })
+          const res2 = await client.request('session/new', { cwd: repoCwd, mcpServers: [] })
+          sessionId = res2?.sessionId || null
+        } catch {}
+      }
+      if (sessionId) await setQwenSessionId(projectId, sessionId)
     }
     if (!sessionId) { yield { kind: 'result', success: false, error: 'Qwen session failed' }; return }
     // Notification stream
@@ -355,7 +366,18 @@ class QwenAdapter implements CLIAdapter {
     await client.request('session/prompt', { sessionId, prompt: parts })
     let thought: string[] = []
     let text: string[] = []
-    function compose() { const parts = []; if (thought.length) parts.push(thought.join('')); if (text.length) { if (parts.length) parts.push('\n\n'); parts.push(text.join('')) } return parts.join('') }
+    function compose() {
+      const segments: string[] = []
+      if (thought.length) segments.push(`<thinking>${thought.join('')}</thinking>`)
+      if (text.length) { if (segments.length) segments.push('\n\n'); segments.push(text.join('')) }
+      let combined = segments.join('')
+      try {
+        // Remove Qwen internal call_* executing... noise and trim excessive blank lines
+        combined = combined.replace(/(^|\n)call[_-][A-Za-z0-9]+.*(\n|$)/g, (m) => (m.endsWith('\n') ? '' : ''))
+        combined = combined.replace(/\n{3,}/g, '\n\n').trim()
+      } catch {}
+      return combined
+    }
     const start = Date.now()
     // Drain updates for a window (best-effort).
     for (let i = 0; i < 500; i++) {
@@ -373,18 +395,18 @@ class QwenAdapter implements CLIAdapter {
         const toolName = (upd?.invocation?.tool || '') as string
         const input = upd?.invocation?.args || {}
         const summary = summarizeTool(toolName, input)
-        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', tool_name: toolName, tool_input: input } }
+        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
         continue
       }
       if (kind === 'plan') {
         const entries = (upd.entries || []).slice(0, 6).map((e: any) => (typeof e === 'string' ? e : e?.title)).filter(Boolean)
         if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
-        yield { kind: 'message', content: entries.map((s: string) => `• ${s}`).join('\n') || 'Planning…', role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }
+        yield { kind: 'message', content: entries.map((s: string) => `• ${s}`).join('\n') || 'Planning…', role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen', event_type: 'plan', original_event: upd } }
         continue
       }
     }
     if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } } }
-    yield { kind: 'message', content: 'Qwen turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'qwen', hidden_from_ui: true } }
+    yield { kind: 'message', content: 'Qwen turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'qwen', hidden_from_ui: true, event_type: 'result' } }
     yield { kind: 'result', success: true }
   }
 }
@@ -409,7 +431,17 @@ class GeminiAdapter implements CLIAdapter {
     const env = { ...process.env, NO_BROWSER: '1' }
     const client = new ACPClient(['gemini', '--experimental-acp'], env, cwd)
     await client.start()
-    // Simple stderr logging omitted
+    // Auto-approve permission requests and stub FS
+    client.onRequest('session/request_permission', async (params) => {
+      const opts = (params?.options as any[]) || []
+      let chosen: any = null
+      for (const kind of ['allow_always', 'allow_once']) { chosen = opts.find((o) => o.kind === kind); if (chosen) break }
+      if (!chosen && opts.length) chosen = opts[0]
+      if (!chosen) return { outcome: { outcome: 'cancelled' } }
+      return { outcome: { outcome: 'selected', optionId: chosen.optionId } }
+    })
+    client.onRequest('fs/read_text_file', async () => ({ content: '' }))
+    client.onRequest('fs/write_text_file', async () => ({}))
     await client.request('initialize', { clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } }, protocolVersion: 1 })
     GeminiAdapter.client = client
     GeminiAdapter.initialized = true
@@ -454,7 +486,12 @@ class GeminiAdapter implements CLIAdapter {
     await client.request('session/prompt', { sessionId, prompt: parts })
     const thought: string[] = []
     const text: string[] = []
-    const compose = () => { const arr: string[] = []; if (thought.length) arr.push(thought.join('')); if (text.length) { if (arr.length) arr.push('\n\n'); arr.push(text.join('')) } return arr.join('') }
+    const compose = () => {
+      const parts: string[] = []
+      if (thought.length) parts.push(`<thinking>${thought.join('')}</thinking>`)
+      if (text.length) { if (parts.length) parts.push('\n\n'); parts.push(text.join('')) }
+      return parts.join('')
+    }
     for (let i = 0; i < 800; i++) {
       const upd = q.shift()
       if (!upd) { await new Promise((r) => setTimeout(r, 10)); continue }
@@ -469,12 +506,18 @@ class GeminiAdapter implements CLIAdapter {
         if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }; thought.length = 0; text.length = 0 }
         const toolName = (upd?.invocation?.tool || '') as string
         const input = upd?.invocation?.args || {}
-        yield { kind: 'message', content: summarizeTool(toolName, input), role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', tool_name: toolName, tool_input: input } }
+        yield { kind: 'message', content: summarizeTool(toolName, input), role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
+        continue
+      }
+      if (kind === 'plan') {
+        const entries = (upd.entries || []).slice(0, 6).map((e: any) => (typeof e === 'string' ? e : e?.title)).filter(Boolean)
+        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }; thought.length = 0; text.length = 0 }
+        yield { kind: 'message', content: entries.map((s: string) => `• ${s}`).join('\n') || 'Planning…', role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini', event_type: 'plan', original_event: upd } }
         continue
       }
     }
     if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } } }
-    yield { kind: 'message', content: 'Gemini turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'gemini', hidden_from_ui: true } }
+    yield { kind: 'message', content: 'Gemini turn completed', role: 'system', messageType: 'result', metadata: { cli_type: 'gemini', hidden_from_ui: true, event_type: 'result' } }
     yield { kind: 'result', success: true }
   }
 }
@@ -549,14 +592,45 @@ async function findLatestCodexRollout(): Promise<string | null> {
 }
 
 function summarizeTool(tool: string, args: any): string {
-  if (tool === 'exec_command') {
-    const cmd = Array.isArray(args.command) ? args.command.join(' ') : String(args.command || '')
-    return `Using tool: exec_command ${cmd}`
+  const t = String(tool || '')
+  const tt = t.toLowerCase()
+  // Normalize to UI-expected pattern: **Tool** `arg`
+  if (tt === 'exec_command' || tt === 'bash' || tt === 'exec') {
+    const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
+    return `**Bash** \`${cmd}\``
   }
-  if (tool === 'web_search') {
-    return `Using tool: web_search ${args?.query || ''}`
+  if (tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch' || tt === 'websearch') {
+    const q = args?.query || args?.q || ''
+    return `**WebSearch** \`${q}\``
   }
-  return `Using tool: ${tool}`
+  if (tt === 'read') {
+    const p = args?.path || args?.file || ''
+    return `**Read** \`${p}\``
+  }
+  if (tt === 'write') {
+    const p = args?.path || args?.file || ''
+    return `**Write** \`${p}\``
+  }
+  if (tt === 'edit' || tt === 'multiedit') {
+    const p = args?.path || args?.file || ''
+    return `**Edit** \`${p}\``
+  }
+  if (tt === 'ls') {
+    const p = args?.path || args?.dir || ''
+    return `**LS** \`${p}\``
+  }
+  if (tt === 'glob') {
+    const p = args?.pattern || ''
+    return `**Glob** \`${p}\``
+  }
+  if (tt === 'grep') {
+    const p = args?.pattern || ''
+    return `**Grep** \`${p}\``
+  }
+  if (tt === 'todowrite' || tt === 'todo_write') {
+    return `**TodoWrite** \`Todo List\``
+  }
+  return `**${t}**`
 }
 
 class SimulatedAdapter implements CLIAdapter {

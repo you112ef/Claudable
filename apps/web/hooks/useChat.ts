@@ -79,7 +79,7 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
       
       if (status === 'act_complete' || status === 'chat_complete') {
         if (requestId) {
-          const isSuccessful = data?.status === 'completed';
+          const isSuccessful = data?.status === 'completed' || data?.status === 'ok';
           completeRequest(requestId, isSuccessful, data?.error);
         }
       }

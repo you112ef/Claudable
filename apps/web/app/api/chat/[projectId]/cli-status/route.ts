@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { getPrisma } from '@repo/db' 
-import { getAllCliStatus } from '@repo/services-cli/src/status'
+import { getAllCliStatus } from '@repo/services/cli'
 
 export async function GET(_: Request, ctx: { params: { projectId: string } }) {
   const { projectId } = ctx.params
@@ -13,4 +13,3 @@ export async function GET(_: Request, ctx: { params: { projectId: string } }) {
   const status = await getAllCliStatus(preferred_cli)
   return NextResponse.json(status)
 }
-

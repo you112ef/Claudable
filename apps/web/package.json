@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.js",
-    "dev:no-open": "next dev --turbo",
+    "dev:no-open": "next dev",
     "build": "next build",
     "start": "next start"
   },

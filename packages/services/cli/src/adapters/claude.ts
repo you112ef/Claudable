@@ -39,14 +39,9 @@ export class ClaudeAdapter {
       const mod = await import('@anthropic-ai/claude-code')
       queryFn = mod.query
     } catch (e) {
-      try {
-        const mod2 = await import('claude-code-sdk')
-        queryFn = mod2.query
-      } catch {
-        yield { kind: 'message', content: 'Claude SDK (@anthropic-ai/claude-code) not installed', role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
-        yield { kind: 'result', success: false, error: 'Claude SDK not available' }
-        return
-      }
+      yield { kind: 'message', content: 'Claude SDK (@anthropic-ai/claude-code) not installed', role: 'system', messageType: 'error', metadata: { cli_type: 'claude' } }
+      yield { kind: 'result', success: false, error: 'Claude SDK not available' }
+      return
     }
 
     const repoCwd = opts.projectPath || process.cwd()
@@ -117,25 +112,32 @@ export class ClaudeAdapter {
           if (sid) {
             try { await (prisma as any).project.update({ where: { id: projectId }, data: { activeClaudeSessionId: sid } }) } catch {}
           }
-          yield { kind: 'message', content: `Claude initialized (Model: ${message?.model || model || ''})`, role: 'system', messageType: 'system', metadata: { cli_type: 'claude', hidden_from_ui: true, session_id: sid } }
+          yield { kind: 'message', content: `Claude initialized (Model: ${message?.model || model || ''})`, role: 'system', messageType: 'system', metadata: { cli_type: 'claude', hidden_from_ui: true, event_type: 'system', session_id: sid } }
           continue
         }
         if (t === 'assistant') {
-          // Flatten assistant message content
+          // Flatten assistant text and surface tool_use blocks as tool messages
           let content = ''
           try {
             const blocks = Array.isArray(message?.message?.content) ? message.message.content : []
             for (const block of blocks) {
-              if (block?.type === 'text' && typeof block?.text === 'string') content += block.text
+              if (block?.type === 'text' && typeof block?.text === 'string') {
+                content += block.text
+              } else if (block?.type === 'tool_use') {
+                const toolName = block?.name || block?.tool || 'Tool'
+                const toolInput = block?.input || {}
+                const summary = summarizeTool(toolName, toolInput)
+                yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'claude', event_type: 'tool_call', tool_name: toolName, tool_input: toolInput, original_event: block } }
+              }
             }
           } catch {}
-          if (content) yield { kind: 'message', content, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'claude', mode: 'SDK' } }
+          if (content) yield { kind: 'message', content, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'claude', mode: 'SDK', event_type: 'assistant', original_event: message?.message } }
           continue
         }
         if (t === 'result') {
           const isError = !!message?.is_error || (message?.subtype && String(message.subtype).startsWith('error'))
           // Hidden result system message with metrics
-          yield { kind: 'message', content: `Session completed in ${message?.duration_ms ?? 0}ms`, role: 'system', messageType: 'result', metadata: { cli_type: 'claude', hidden_from_ui: true, duration_ms: message?.duration_ms, duration_api_ms: message?.duration_api_ms, total_cost_usd: message?.total_cost_usd, num_turns: message?.num_turns } }
+          yield { kind: 'message', content: `Session completed in ${message?.duration_ms ?? 0}ms`, role: 'system', messageType: 'result', metadata: { cli_type: 'claude', hidden_from_ui: true, event_type: 'result', duration_ms: message?.duration_ms, duration_api_ms: message?.duration_api_ms, total_cost_usd: message?.total_cost_usd, num_turns: message?.num_turns } }
           yield { kind: 'result', success: !isError, error: isError ? 'error' : undefined }
           continue
         }
@@ -156,3 +158,44 @@ function projectIdFromPath(repoCwd: string): string {
 }
 
 export default ClaudeAdapter
+
+function summarizeTool(tool: string, args: any): string {
+  const t = String(tool || '')
+  const tt = t.toLowerCase()
+  if (tt === 'bash' || tt === 'exec' || tt === 'exec_command') {
+    const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
+    return `**Bash** \`${cmd}\``
+  }
+  if (tt === 'websearch' || tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch') {
+    const q = args?.query || args?.q || ''
+    return `**WebSearch** \`${q}\``
+  }
+  if (tt === 'read') {
+    const p = args?.path || args?.file || ''
+    return `**Read** \`${p}\``
+  }
+  if (tt === 'write') {
+    const p = args?.path || args?.file || ''
+    return `**Write** \`${p}\``
+  }
+  if (tt === 'edit' || tt === 'multiedit') {
+    const p = args?.path || args?.file || ''
+    return `**Edit** \`${p}\``
+  }
+  if (tt === 'ls') {
+    const p = args?.path || args?.dir || ''
+    return `**LS** \`${p}\``
+  }
+  if (tt === 'glob') {
+    const p = args?.pattern || ''
+    return `**Glob** \`${p}\``
+  }
+  if (tt === 'grep') {
+    const p = args?.pattern || ''
+    return `**Grep** \`${p}\``
+  }
+  if (tt === 'todowrite' || tt === 'todo_write') {
+    return `**TodoWrite** \`Todo List\``
+  }
+  return `**${t}**`
+}

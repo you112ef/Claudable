@@ -29,7 +29,8 @@
     "smoke:env": "bash scripts/smoke-env.sh",
     "smoke:repo": "bash scripts/smoke-repo.sh",
     "smoke:commits": "bash scripts/smoke-commits.sh",
-    "desktop:dev": "concurrently --raw \"npm run dev:web\" \"npm --workspace apps/desktop run dev\""
+    "desktop:dev": "concurrently --raw \"npm run dev:web\" \"npm --workspace apps/desktop run dev\"",
+    "build": "npm --workspace apps/web run build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

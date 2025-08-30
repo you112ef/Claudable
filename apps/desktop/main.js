@@ -33,7 +33,7 @@ async function ensureServer() {
   if (!app.isPackaged) return process.env.ELECTRON_START_URL || 'http://localhost:3000'
   const webDir = resolveWebDir()
   const port = await findFreePort()
-  const env = { ...process.env, PORT: String(port), BROWSER: 'none', WS_STANDALONE: '0' }
+  const env = { ...process.env, PORT: String(port), BROWSER: 'none', WS_STANDALONE: '0', NEXT_PUBLIC_WS_BASE: '' }
   // Try to start Next production server
   const child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['next', 'start', '-p', String(port)], { cwd: webDir, stdio: 'inherit', env, shell: true })
   child.on('error', (e) => console.error('[desktop] failed to start Next:', e.message))

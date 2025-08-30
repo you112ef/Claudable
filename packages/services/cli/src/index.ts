@@ -95,7 +95,7 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   // Broadcast start
   wsRegistry.broadcast(projectId, (
     mode === 'chat'
-      ? { type: 'chat_start', data: { session_id: session.id, instruction: req.instruction } }
+      ? { type: 'chat_start', data: { session_id: session.id, instruction: req.instruction, request_id: req.request_id || null } }
       : { type: 'act_start', data: { session_id: session.id, instruction: req.instruction, request_id: req.request_id || null } }
   ) as any)
 
@@ -193,8 +193,8 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   // Broadcast complete
   wsRegistry.broadcast(projectId, (
     mode === 'chat'
-      ? { type: 'chat_complete', data: { status: result.success ? 'ok' : 'failed', session_id: session.id, error: result.error || null } }
-      : { type: 'act_complete', data: { status: result.success ? 'ok' : 'failed', session_id: session.id } }
+      ? { type: 'chat_complete', data: { status: result.success ? 'ok' : 'failed', session_id: session.id, error: result.error || null, request_id: req.request_id || null } }
+      : { type: 'act_complete', data: { status: result.success ? 'ok' : 'failed', session_id: session.id, request_id: req.request_id || null } }
   ) as any)
 
   return {

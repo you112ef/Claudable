@@ -24,6 +24,7 @@ export function useWebSocket({
 }: WebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectionAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -47,6 +48,11 @@ export function useWebSocket({
         setIsConnected(true);
         connectionAttemptsRef.current = 0;
         onConnect?.();
+        // Start heartbeat ping every 25s
+        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = setInterval(() => {
+          try { ws.send('ping'); } catch {}
+        }, 25000);
       };
 
       ws.onmessage = (event) => {
@@ -90,6 +96,10 @@ export function useWebSocket({
       ws.onclose = () => {
         setIsConnected(false);
         onDisconnect?.();
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
         
         // Only reconnect if we should and haven't exceeded attempts
         if (shouldReconnectRef.current) {
@@ -122,6 +132,10 @@ export function useWebSocket({
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
+    }
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
     }
     
     setIsConnected(false);

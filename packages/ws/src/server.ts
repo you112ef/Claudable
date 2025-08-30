@@ -27,6 +27,15 @@ function ensureServer() {
         return
       }
       wsRegistry.add(projectId, socket as any)
+      // Basic ping/pong support
+      ;(socket as any).on('message', (data: any) => {
+        try {
+          const s = typeof data === 'string' ? data : String(data)
+          if (s === 'ping') {
+            ;(socket as any).send('pong')
+          }
+        } catch {}
+      })
       socket.on('close', () => wsRegistry.remove(projectId, socket as any))
       socket.on('error', () => wsRegistry.remove(projectId, socket as any))
     } catch {
@@ -45,4 +54,3 @@ function ensureServer() {
 if (typeof process !== 'undefined') {
   ensureServer()
 }
-

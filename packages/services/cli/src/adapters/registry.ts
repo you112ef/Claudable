@@ -6,6 +6,7 @@ import path from 'node:path'
 import { getPrisma } from '@repo/db'
 import { loadSystemPrompt } from '@repo/services-projects'
 import { ACPClient } from './acp'
+import ClaudeAdapter from './claude'
 
 export type AdapterEvent =
   | { kind: 'output'; text: string }
@@ -607,6 +608,7 @@ export function getAdapter(cliType: string): CLIAdapter {
   if (name === 'cursor') return new CursorAdapter()
   if (name === 'qwen') return new QwenAdapter()
   if (name === 'gemini') return new GeminiAdapter()
+  if (name === 'claude') return new ClaudeAdapter()
   return new SimulatedAdapter(name)
 }
 

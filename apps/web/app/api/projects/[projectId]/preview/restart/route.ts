@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { getPrisma } from '@repo/db'
-import { restartPreview } from '@repo/services-preview-runtime'
+import { restartPreview } from '@repo/services/preview-runtime'
 
 export async function POST(req: Request, ctx: { params: { projectId: string } }) {
   const projectId = ctx.params.projectId
@@ -19,4 +19,3 @@ export async function POST(req: Request, ctx: { params: { projectId: string } })
   await (prisma as any).project.update({ where: { id: projectId }, data: { status: 'preview_running', previewUrl: result.url ?? null } }).catch(() => {})
   return NextResponse.json({ running: true, port: result.port, url: result.url, process_id: result.process_id ?? null, error: null })
 }
-

@@ -5,6 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { previewPorts } from '@repo/config'
+import { wsRegistry } from '@repo/ws'
 
 type ProcInfo = {
   child: import('node:child_process').ChildProcessWithoutNullStreams
@@ -119,11 +120,16 @@ export async function startPreview(projectId: string, repoPath: string, port?: n
     await new Promise((r) => setTimeout(r, 500))
     if (child.exitCode !== null) {
       registry.delete(projectId)
-      return { running: false, error: 'Next.js server failed to start' }
+      const errMsg = 'Next.js server failed to start'
+      try { wsRegistry.broadcast(projectId, { type: 'preview_error', project_id: projectId, message: errMsg } as any) } catch {}
+      return { running: false, error: errMsg }
     }
+    try { wsRegistry.broadcast(projectId, { type: 'preview_success', project_id: projectId, url, port: p } as any) } catch {}
     return { running: true, port: p, url, process_id: child.pid ?? undefined }
   } catch (e: any) {
-    return { running: false, error: e?.message || 'Failed to start preview' }
+    const msg = e?.message || 'Failed to start preview'
+    try { wsRegistry.broadcast(projectId, { type: 'preview_error', project_id: projectId, message: msg } as any) } catch {}
+    return { running: false, error: msg }
   }
 }
 
@@ -138,6 +144,7 @@ export async function stopPreview(projectId: string): Promise<void> {
     if (info.child.exitCode === null) info.child.kill('SIGKILL')
   } catch {}
   registry.delete(projectId)
+  try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'preview_stopped', message: 'Preview stopped' } } as any) } catch {}
 }
 
 export function getStatus(projectId: string): { running: boolean; port: number | null; url: string | null; process_id: number | null; error: string | null } {
@@ -170,4 +177,3 @@ export function getAllErrorLogs(projectId: string): string {
   if (info.logs.length === 0) return 'No logs available for this project'
   return info.logs.join('\n')
 }
-

@@ -5,6 +5,16 @@ const path = require('path');
 const os = require('os');
 require('dotenv').config();
 
+// Ensure Prisma uses correct SQLite file URL if DATABASE_URL is set
+if (!process.env.PRISMA_DATABASE_URL && process.env.DATABASE_URL) {
+  const db = process.env.DATABASE_URL;
+  if (db.startsWith('sqlite:///')) {
+    process.env.PRISMA_DATABASE_URL = 'file:' + db.replace('sqlite:///', '');
+  } else {
+    process.env.PRISMA_DATABASE_URL = db;
+  }
+}
+
 const webDir = path.join(__dirname, '..', 'apps', 'web');
 const isWindows = os.platform() === 'win32';
 
@@ -20,7 +30,8 @@ const webProcess = spawn(
   { 
     cwd: webDir,
     stdio: 'inherit',
-    shell: isWindows
+    shell: isWindows,
+    env: { ...process.env, BROWSER: 'none' }
   }
 );
 

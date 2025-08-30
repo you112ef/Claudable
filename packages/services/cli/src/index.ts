@@ -11,7 +11,7 @@ import { startPreview, getStatus } from '@repo/services/preview-runtime'
 import { wsRegistry } from '@repo/ws'
 import { commitAll, hasChanges } from '@repo/services-git'
 import { getAdapter } from './adapters/registry'
-import { ensureGeminiMd, ensureQwenMd } from './provider-docs'
+import { ensureGeminiMd, ensureQwenMd, ensureClaudeConfig } from './provider-docs'
 export { getCliStatusSingle, getAllCliStatus } from './status'
 export { mapUnifiedModel, defaultModel, supportedUnifiedModels } from './model-mapping'
 
@@ -107,6 +107,7 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
       const t = (cliType || '').toLowerCase()
       if (t === 'gemini') await ensureGeminiMd(repoRoot)
       if (t === 'qwen') await ensureQwenMd(repoRoot)
+      if (t === 'claude') await ensureClaudeConfig(repoRoot)
     } catch {}
   }
   const session = await createSession(prisma as any, projectId, cliType, req.instruction)

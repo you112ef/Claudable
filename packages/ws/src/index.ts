@@ -1,6 +1,6 @@
 // Shared WebSocket event types and a minimal in-memory project registry
 // Start server-side WS acceptor in Node runtime (fire-and-forget) unless disabled
-if (!process.env.WS_STANDALONE || process.env.WS_STANDALONE === '1' || process.env.WS_STANDALONE === 'true') {
+if (process.env.WS_STANDALONE === '1' || process.env.WS_STANDALONE === 'true') {
   try { import('./server').catch(() => {}) } catch {}
 }
 
@@ -52,6 +52,11 @@ class ProjectRegistry {
     if (set.size === 0) this.rooms.delete(projectId)
   }
 
+  count(projectId: string): number {
+    const set = this.rooms.get(projectId)
+    return set ? set.size : 0
+  }
+
   broadcast(projectId: string, event: WSEvent) {
     const set = this.rooms.get(projectId)
     if (!set) return
@@ -66,4 +71,14 @@ class ProjectRegistry {
   }
 }
 
-export const wsRegistry = new ProjectRegistry()
+// Ensure a single registry instance across Next.js pages/app bundles
+// by storing on the Node global object.
+declare global {
+  // eslint-disable-next-line no-var
+  var __WS_REGISTRY__: ProjectRegistry | undefined
+}
+
+const registry: ProjectRegistry = (globalThis as any).__WS_REGISTRY__ || new ProjectRegistry()
+;(globalThis as any).__WS_REGISTRY__ = registry
+
+export const wsRegistry = registry

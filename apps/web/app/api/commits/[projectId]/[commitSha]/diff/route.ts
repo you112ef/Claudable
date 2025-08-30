@@ -3,7 +3,7 @@ export const runtime = 'nodejs'
 import { NextResponse } from 'next/server'
 import { getPrisma } from '@repo/db'
 import { resolveProjectRepoPath } from '@repo/config'
-import { showDiff } from '@repo/services-git'
+import { showDiff } from '@repo/services/git'
 
 export async function GET(_: Request, ctx: { params: { projectId: string; commitSha: string } }) {
   const { projectId, commitSha } = ctx.params

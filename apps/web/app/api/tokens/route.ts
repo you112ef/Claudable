@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { saveServiceToken } from '@repo/services-tokens'
+import { saveServiceToken } from '@repo/services/tokens'
 
 const CreateSchema = z.object({
   provider: z.enum(['github', 'supabase', 'vercel']),

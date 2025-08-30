@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
-import { getServiceTokenMetadata, deleteServiceToken, isValidProvider } from '@repo/services-tokens'
+import { getServiceTokenMetadata, deleteServiceToken, isValidProvider } from '@repo/services/tokens'
 
 export async function GET(_: Request, ctx: { params: { id: string } }) {
   const id = ctx.params.id

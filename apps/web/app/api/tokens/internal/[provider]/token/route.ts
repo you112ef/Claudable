@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
-import { getPlainToken, updateLastUsed, isValidProvider } from '@repo/services-tokens'
+import { getPlainToken, updateLastUsed, isValidProvider } from '@repo/services/tokens'
 
 export async function GET(_: Request, ctx: { params: { provider: string } }) {
   const provider = ctx.params.provider

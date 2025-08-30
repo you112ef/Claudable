@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import fs from 'node:fs/promises'
-import { assetFilePath, assetsDir, contentTypeFromFilename, projectExists } from '@repo/services-assets'
+import { assetFilePath, assetsDir, contentTypeFromFilename, projectExists } from '@repo/services/assets'
 
 export async function GET(_: Request, ctx: { params: { projectId: string; filename: string } }) {
   const { projectId, filename } = ctx.params

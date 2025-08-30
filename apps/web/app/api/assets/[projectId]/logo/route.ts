@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { assetsDir, writeBytes, projectExists } from '@repo/services-assets'
+import { assetsDir, writeBytes, projectExists } from '@repo/services/assets'
 
 const BodySchema = z.object({ b64_png: z.string().min(1) })
 

@@ -24,6 +24,10 @@
         "../../packages/*",
         "../../packages/services/*/src",
         "../../packages/services/*"
+      ],
+      "@repo/services-projects": [
+        "../../packages/services/projects/src",
+        "../../packages/services/projects"
       ]
     },
     "resolveJsonModule": true,

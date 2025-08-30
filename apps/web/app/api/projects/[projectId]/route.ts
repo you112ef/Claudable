@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
-import { getProject, updateProject, deleteProject as deleteProjectSvc } from '@repo/services-projects'
+import { getProject, updateProject, deleteProject as deleteProjectSvc } from '@repo/services/projects'
 
 export async function GET(_: Request, ctx: { params: { projectId: string } }) {
   const projectId = ctx.params.projectId

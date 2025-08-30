@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
-import { stopPreview } from '@repo/services-preview-runtime'
+import { stopPreview } from '@repo/services/preview-runtime'
 
 export async function POST(_: Request, ctx: { params: { projectId: string } }) {
   const projectId = ctx.params.projectId
@@ -12,4 +12,3 @@ export async function POST(_: Request, ctx: { params: { projectId: string } }) {
     return NextResponse.json({ detail: 'Failed to stop preview' }, { status: 500 })
   }
 }
-

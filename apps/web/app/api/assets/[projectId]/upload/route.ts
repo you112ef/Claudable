@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
-import { projectExists, assetsDir, writeBytes } from '@repo/services-assets'
+import { projectExists, assetsDir, writeBytes } from '@repo/services/assets'
 import path from 'node:path'
 
 export async function POST(req: Request, ctx: { params: { projectId: string } }) {

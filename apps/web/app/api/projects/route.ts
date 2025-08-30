@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { listProjects, createProject, ProjectCreateSchema } from '@repo/services-projects'
+import { listProjects, createProject, ProjectCreateSchema } from '@repo/services/projects'
 
 export async function GET() {
   try {

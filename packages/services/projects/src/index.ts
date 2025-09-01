@@ -157,14 +157,34 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   await (prisma as any).projectServiceConnection.deleteMany({ where: { projectId } })
   await (prisma as any).project.delete({ where: { id: projectId } })
   // Cleanup files
-  try { await cleanupProjectFiles(projectId) } catch {}
+  try { 
+    await cleanupProjectFiles(projectId) 
+  } catch (error) {
+    console.error(`[ProjectDelete] File cleanup failed for project ${projectId}:`, error)
+    // Continue anyway - don't fail the entire deletion
+  }
   return true
 }
 
 export async function cleanupProjectFiles(projectId: string): Promise<void> {
   const root = path.join(projectsRoot(), projectId)
-  if (!fs.existsSync(root)) return
-  await fsp.rm(root, { recursive: true, force: true })
+  console.log(`[ProjectDelete] Attempting to delete project directory: ${root}`)
+  if (!fs.existsSync(root)) {
+    console.log(`[ProjectDelete] Directory ${root} does not exist, skipping cleanup`)
+    return
+  }
+  
+  try {
+    // List contents before deletion for debugging
+    const contents = await fsp.readdir(root, { withFileTypes: true })
+    console.log(`[ProjectDelete] Directory contents before deletion:`, contents.map(d => `${d.name}${d.isDirectory() ? '/' : ''}`))
+    
+    await fsp.rm(root, { recursive: true, force: true })
+    console.log(`[ProjectDelete] ✅ Successfully deleted project directory: ${root}`)
+  } catch (error) {
+    console.error(`[ProjectDelete] ❌ Failed to delete project directory ${root}:`, error)
+    throw error
+  }
 }
 
 export async function initializeProjectBackground(projectId: string, projectName: string): Promise<void> {
@@ -175,6 +195,8 @@ export async function initializeProjectBackground(projectId: string, projectName
     const assets = resolveProjectAssetsPath(projectId)
     await fsp.mkdir(repo, { recursive: true })
     await fsp.mkdir(assets, { recursive: true })
+    // Clone Next.js starter template (replaced create-next-app)
+    await cloneStarterTemplate(repo)
     // Create placeholder .env
     await fsp.writeFile(path.join(repo, '.env'), `NEXT_PUBLIC_PROJECT_ID=${projectId}\nNEXT_PUBLIC_PROJECT_NAME=${projectName}\n`, { flag: 'w' })
     // Init git minimally if available
@@ -205,6 +227,66 @@ async function tryInitGit(repoPath: string) {
     await run(['commit', '-m', 'Initial commit'])
   } catch {
     // ignore
+  }
+}
+
+async function cloneStarterTemplate(repoPath: string) {
+  // Clone Next.js starter template from GitHub
+  const { spawn } = await import('node:child_process')
+  const parentDir = path.dirname(repoPath)
+  const projectName = path.basename(repoPath)
+  
+  // Clean up target directory if it exists
+  try {
+    const exists = await fsp.stat(repoPath).catch(() => null)
+    if (exists) {
+      await fsp.rm(repoPath, { recursive: true, force: true })
+      console.log(`[Project Init] Cleaned up existing directory: ${repoPath}`)
+    }
+  } catch {}
+  
+  console.log(`[Project Init] Cloning nextjs-starter template to ${repoPath}`)
+  
+  // Git clone the starter template
+  const cloneArgs = [
+    'clone',
+    'https://github.com/opactorai/nextjs-starter.git',
+    projectName
+  ]
+  
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('git', cloneArgs, { 
+      cwd: parentDir, 
+      stdio: ['ignore', 'pipe', 'pipe'] 
+    })
+    let stderr = ''
+    let stdout = ''
+    
+    child.stdout?.on('data', (d) => { stdout += String(d) })
+    child.stderr?.on('data', (d) => { stderr += String(d) })
+    child.on('error', (error) => {
+      console.error(`[Project Init] Git clone error:`, error)
+      reject(error)
+    })
+    child.on('close', (code) => {
+      if (code === 0) {
+        console.log(`[Project Init] ✅ Successfully cloned nextjs-starter template`)
+        resolve()
+      } else {
+        const errorMsg = stderr || stdout || 'Git clone failed'
+        console.error(`[Project Init] ❌ Git clone failed:`, errorMsg)
+        reject(new Error(errorMsg))
+      }
+    })
+  })
+  
+  // Remove .git directory to start fresh
+  try {
+    const gitDir = path.join(repoPath, '.git')
+    await fsp.rm(gitDir, { recursive: true, force: true })
+    console.log(`[Project Init] Removed .git directory for fresh start`)
+  } catch {
+    // Ignore if .git doesn't exist
   }
 }
 

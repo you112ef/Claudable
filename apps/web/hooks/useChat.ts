@@ -31,18 +31,24 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
   const { isConnected } = useWebSocket({
     projectId,
     onMessage: (message) => {
-      console.log('💬 [Chat] Adding message:', message);
+      console.log('💬 [Chat] Adding message:', message.message_type, message.content?.length + ' chars', message.metadata?.event_type);
       setMessages(prev => {
         // Smart message merging for better UX
         if (prev.length > 0) {
           const lastMessage = prev[prev.length - 1];
           const timeDiff = new Date(message.created_at).getTime() - new Date(lastMessage.created_at).getTime();
           
+          // More conservative merging to avoid losing final messages
+          // Don't merge if current message is marked as final_flush
+          const isFinalFlush = message.metadata?.event_type === 'final_flush';
+          
           // Merge if:
           // 1. Same role and conversation
           // 2. Within 5 seconds 
           // 3. Last message is not tool_use and current is chat
+          // 4. Current message is NOT a final flush
           if (
+            !isFinalFlush &&
             lastMessage.role === message.role && 
             lastMessage.conversation_id === message.conversation_id &&
             timeDiff < 5000 && 
@@ -63,7 +69,7 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
         }
         
         const newMessages = [...prev, message];
-        console.log('💬 [Chat] Total messages:', newMessages.length);
+        console.log('💬 [Chat] Total messages:', newMessages.length, '| Last:', message.message_type, message.content?.substring(0, 50));
         return newMessages;
       });
     },

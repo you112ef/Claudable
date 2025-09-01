@@ -150,19 +150,24 @@ class CodexAdapter implements CLIAdapter {
       }
       if (type === 'exec_command_begin') {
         const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command || '')
+        const toolSummary = `**Bash** \`${cmd}\``
+        console.log(`🔧 ${toolSummary}`)
         yield { kind: 'message', content: `Using tool: exec_command ${cmd}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Bash', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'patch_apply_begin') {
+        console.log(`🔧 **Edit** \`code changes\``)
         yield { kind: 'message', content: 'Applying code changes', role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'web_search_begin') {
+        console.log(`🔧 **WebSearch** \`${msg.query || ''}\``)
         yield { kind: 'message', content: `Using tool: web_search ${msg.query || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'WebSearch', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'mcp_tool_call_begin') {
         const inv = msg.invocation || {}
+        console.log(`🔧 **MCPTool** \`${inv.server || ''}/${inv.tool || ''}\``)
         yield { kind: 'message', content: `Using tool: ${inv.server || ''}/${inv.tool || ''}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'MCPTool', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
@@ -259,7 +264,9 @@ class CursorAdapter implements CLIAdapter {
         const toolName = rawName.replace('ToolCall', '')
         if (subtype === 'started') {
           const args = toolCall[rawName]?.args || {}
-          yield { kind: 'message', content: summarizeTool(toolName, args), role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, cli_type: 'cursor', event_type: 'tool_call', original_event: evt } }
+          const summary = summarizeTool(toolName, args)
+          console.log(`🔧 ${summary}`)
+          yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, cli_type: 'cursor', event_type: 'tool_call', original_event: evt } }
           return
         }
         if (subtype === 'completed') {
@@ -379,10 +386,22 @@ class QwenAdapter implements CLIAdapter {
       return combined
     }
     const start = Date.now()
-    // Drain updates for a window (best-effort).
-    for (let i = 0; i < 500; i++) {
+    const MAX_IDLE_TIME = 30000 // 30 seconds without updates = timeout
+    let lastUpdateTime = Date.now()
+    
+    // Drain updates with timeout-based approach instead of fixed loop count
+    while (true) {
       const upd = q.shift()
-      if (!upd) { await new Promise((r) => setTimeout(r, 10)); continue }
+      if (!upd) { 
+        // Check for timeout
+        if (Date.now() - lastUpdateTime > MAX_IDLE_TIME) {
+          console.log('[QwenAdapter] No updates for 30s, assuming completion')
+          break
+        }
+        await new Promise((r) => setTimeout(r, 100)); 
+        continue 
+      }
+      lastUpdateTime = Date.now() // Reset timeout on new update
       const kind = upd.sessionUpdate || upd.type
       if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
         const t = (upd.content?.text ?? upd.text ?? '') as string
@@ -390,12 +409,23 @@ class QwenAdapter implements CLIAdapter {
         continue
       }
       if (kind === 'tool_call' || kind === 'tool_call_update') {
-        if (kind === 'tool_call_update') continue
-        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
-        const toolName = (upd?.invocation?.tool || '') as string
-        const input = upd?.invocation?.args || {}
-        const summary = summarizeTool(toolName, input)
-        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
+        // Process both tool_call and tool_call_update events for better visibility
+        let shouldYield = true
+        if (kind === 'tool_call_update') {
+          // For update events, only yield if there's meaningful new information
+          const toolName = upd?.invocation?.tool
+          const args = upd?.invocation?.args
+          shouldYield = !!(toolName && args && Object.keys(args).length > 0)
+        }
+        
+        if (shouldYield) {
+          if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
+          const toolName = (upd?.invocation?.tool || '') as string
+          const input = upd?.invocation?.args || {}
+          const summary = summarizeTool(toolName, input)
+          console.log(`🔧 ${summary}`)
+          yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd, update_type: kind } }
+        }
         continue
       }
       if (kind === 'plan') {
@@ -475,11 +505,27 @@ class GeminiAdapter implements CLIAdapter {
     if (opts.images && opts.images.length) {
       for (const img of opts.images) {
         let b64 = (img as any).base64_data || (img as any).data
-        if (!b64 && (img as any).url && (img as any).url.startsWith('data:')) { try { b64 = (img as any).url.split(',', 1)[1] } catch {} }
+        let mimeFromUrl: string | undefined
+        const urlVal = (img as any).url
+        if (!b64 && typeof urlVal === 'string' && urlVal.startsWith('data:')) {
+          try {
+            const commaIdx = urlVal.indexOf(',')
+            const header = urlVal.slice(5, commaIdx) // e.g., image/png;base64
+            const semi = header.indexOf(';')
+            mimeFromUrl = semi >= 0 ? header.slice(0, semi) : header
+            b64 = urlVal.slice(commaIdx + 1)
+          } catch {}
+        }
         if (img.path && fs.existsSync(img.path)) {
-          try { const data = await fsp.readFile(img.path); const mime = mimeFor(img.path); const enc = data.toString('base64'); parts.push({ type: 'image', mimeType: mime, data: enc }) } catch {}
+          try {
+            const data = await fsp.readFile(img.path)
+            const mime = mimeFor(img.path)
+            const enc = data.toString('base64')
+            parts.push({ type: 'image', mimeType: mime, data: enc })
+          } catch {}
         } else if (b64) {
-          parts.push({ type: 'image', mimeType: img.mime_type || 'image/png', data: String(b64) })
+          const mime = (img as any).mime_type || mimeFromUrl || 'image/png'
+          parts.push({ type: 'image', mimeType: mime, data: String(b64) })
         }
       }
     }
@@ -492,9 +538,22 @@ class GeminiAdapter implements CLIAdapter {
       if (text.length) { if (parts.length) parts.push('\n\n'); parts.push(text.join('')) }
       return parts.join('')
     }
-    for (let i = 0; i < 800; i++) {
+    const MAX_IDLE_TIME_GEMINI = 30000 // 30 seconds without updates = timeout
+    let lastUpdateTimeGemini = Date.now()
+    
+    // Drain updates with timeout-based approach instead of fixed loop count
+    while (true) {
       const upd = q.shift()
-      if (!upd) { await new Promise((r) => setTimeout(r, 10)); continue }
+      if (!upd) { 
+        // Check for timeout
+        if (Date.now() - lastUpdateTimeGemini > MAX_IDLE_TIME_GEMINI) {
+          console.log('[GeminiAdapter] No updates for 30s, assuming completion')
+          break
+        }
+        await new Promise((r) => setTimeout(r, 100)); 
+        continue 
+      }
+      lastUpdateTimeGemini = Date.now() // Reset timeout on new update
       const kind = upd.sessionUpdate || upd.type
       if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
         const t = (upd.content?.text ?? upd.text ?? '') as string
@@ -506,7 +565,9 @@ class GeminiAdapter implements CLIAdapter {
         if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }; thought.length = 0; text.length = 0 }
         const toolName = (upd?.invocation?.tool || '') as string
         const input = upd?.invocation?.args || {}
-        yield { kind: 'message', content: summarizeTool(toolName, input), role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
+        const summary = summarizeTool(toolName, input)
+        console.log(`🔧 ${summary}`)
+        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
         continue
       }
       if (kind === 'plan') {

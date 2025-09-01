@@ -29,7 +29,20 @@ export function useWebSocket({
   const shouldReconnectRef = useRef(true);
   const [isConnected, setIsConnected] = useState(false);
 
-  const connect = useCallback(() => {
+  // Keep latest callbacks in refs to avoid reconnecting or using stale closures
+  const onMessageRef = useRef(onMessage);
+  const onStatusRef = useRef(onStatus);
+  const onConnectRef = useRef(onConnect);
+  const onDisconnectRef = useRef(onDisconnect);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => { onMessageRef.current = onMessage; }, [onMessage]);
+  useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
+  useEffect(() => { onConnectRef.current = onConnect; }, [onConnect]);
+  useEffect(() => { onDisconnectRef.current = onDisconnect; }, [onDisconnect]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
+  const connect = useCallback(async () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       return;
     }
@@ -40,22 +53,27 @@ export function useWebSocket({
     }
 
     try {
-      const wsBase = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
+      const isHttps = typeof window !== 'undefined' ? window.location.protocol === 'https:' : false;
+      const defaultProto = isHttps ? 'wss' : 'ws';
+      const wsBase = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `${defaultProto}://${window.location.host}` : 'ws://localhost:3000');
       const fullUrl = `${wsBase}/api/chat/${projectId}`;
 
       // Ensure the Next.js server has attached the WebSocketServer by
-      // triggering the HTTP handler once before upgrading to WS.
-      // We intentionally don't block on errors here.
+      // triggering the HTTP handler and waiting for it to complete.
       try {
-        fetch(`/api/chat/${projectId}`).catch(() => {});
-      } catch {}
+        await fetch(`/api/chat/${projectId}`);
+        // Reduced wait time for faster initial prompt display
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        return;
+      }
 
       const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {
         setIsConnected(true);
         connectionAttemptsRef.current = 0;
-        onConnect?.();
+        onConnectRef.current?.();
         // Start heartbeat ping every 25s
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = setInterval(() => {
@@ -71,39 +89,43 @@ export function useWebSocket({
           
           const data = JSON.parse(event.data);
           
-          if (data.type === 'message' && onMessage && data.data) {
-            onMessage(data.data);
-          } else if (data.type === 'preview_error' && onStatus) {
-            onStatus('preview_error', data);
-          } else if (data.type === 'preview_success' && onStatus) {
-            onStatus('preview_success', data);
-          } else if ((data.type === 'project_status' || data.type === 'status') && onStatus) {
-            onStatus('project_status', data.data || { status: data.status, message: data.message });
-          } else if (data.type === 'act_start' && onStatus) {
-            onStatus('act_start', data.data, data.data?.request_id);
-          } else if (data.type === 'chat_start' && onStatus) {
-            onStatus('chat_start', data.data, data.data?.request_id);
-          } else if (data.type === 'act_complete' && onStatus) {
-            onStatus('act_complete', data.data, data.data?.request_id);
-          } else if (data.type === 'chat_complete' && onStatus) {
-            onStatus('chat_complete', data.data, data.data?.request_id);
+          // Debug: Log all incoming WebSocket messages
+          if (data.type === 'message') {
+            console.log('🔌 [WebSocket] Received message:', data.data?.message_type, data.data?.content?.length + ' chars');
+          }
+          
+          const _onMsg = onMessageRef.current;
+          const _onSt = onStatusRef.current;
+          if (data.type === 'message' && _onMsg && data.data) {
+            _onMsg(data.data);
+          } else if (data.type === 'preview_error' && _onSt) {
+            _onSt('preview_error', data);
+          } else if (data.type === 'preview_success' && _onSt) {
+            _onSt('preview_success', data);
+          } else if ((data.type === 'project_status' || data.type === 'status') && _onSt) {
+            _onSt('project_status', data.data || { status: data.status, message: data.message });
+          } else if (data.type === 'act_start' && _onSt) {
+            _onSt('act_start', data.data, data.data?.request_id);
+          } else if (data.type === 'chat_start' && _onSt) {
+            _onSt('chat_start', data.data, data.data?.request_id);
+          } else if (data.type === 'act_complete' && _onSt) {
+            _onSt('act_complete', data.data, data.data?.request_id);
+          } else if (data.type === 'chat_complete' && _onSt) {
+            _onSt('chat_complete', data.data, data.data?.request_id);
           } else {
           }
         } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
+          // Silent failure - invalid message format
         }
       };
 
       ws.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-        console.error('❌ WebSocket readyState:', ws.readyState);
-        console.error('❌ WebSocket URL:', ws.url);
-        onError?.(new Error(`WebSocket connection error to ${ws.url}`));
+        onErrorRef.current?.(new Error(`WebSocket connection error`));
       };
 
       ws.onclose = () => {
         setIsConnected(false);
-        onDisconnect?.();
+        onDisconnectRef.current?.();
         if (pingIntervalRef.current) {
           clearInterval(pingIntervalRef.current);
           pingIntervalRef.current = null;
@@ -117,7 +139,7 @@ export function useWebSocket({
           if (attempts < 5) {
             const delay = Math.min(1000 * Math.pow(2, attempts), 10000);
             reconnectTimeoutRef.current = setTimeout(() => {
-              connect();
+              connect().catch(() => {});
             }, delay);
           }
         }
@@ -125,10 +147,9 @@ export function useWebSocket({
 
       wsRef.current = ws;
     } catch (error) {
-      console.error('Failed to create WebSocket connection:', error);
       onError?.(error as Error);
     }
-  }, [projectId, onMessage, onStatus, onConnect, onDisconnect, onError]);
+  }, [projectId]);
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false;
@@ -152,20 +173,18 @@ export function useWebSocket({
   const sendMessage = useCallback((data: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(data));
-    } else {
-      console.warn('WebSocket is not connected');
     }
   }, []);
 
   useEffect(() => {
     shouldReconnectRef.current = true;
     connectionAttemptsRef.current = 0;
-    connect();
+    connect().catch(() => {});
     
     return () => {
       disconnect();
     };
-  }, [projectId]);
+  }, [projectId, connect]);
 
   return {
     isConnected,

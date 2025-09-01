@@ -4,6 +4,48 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getPrisma } from '@repo/db'
 
+// Helper function for tool summaries (matching registry.ts)
+function summarizeTool(tool: string, args: any): string {
+  const t = String(tool || '')
+  const tt = t.toLowerCase()
+  if (tt === 'exec_command' || tt === 'bash' || tt === 'exec') {
+    const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
+    return `**Bash** \`${cmd}\``
+  }
+  if (tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch' || tt === 'websearch') {
+    const q = args?.query || args?.q || ''
+    return `**WebSearch** \`${q}\``
+  }
+  if (tt === 'read') {
+    const p = args?.path || args?.file || ''
+    return `**Read** \`${p}\``
+  }
+  if (tt === 'write') {
+    const p = args?.path || args?.file || ''
+    return `**Write** \`${p}\``
+  }
+  if (tt === 'edit' || tt === 'multiedit') {
+    const p = args?.path || args?.file || ''
+    return `**Edit** \`${p}\``
+  }
+  if (tt === 'ls') {
+    const p = args?.path || args?.dir || ''
+    return `**LS** \`${p}\``
+  }
+  if (tt === 'glob') {
+    const p = args?.pattern || ''
+    return `**Glob** \`${p}\``
+  }
+  if (tt === 'grep') {
+    const p = args?.pattern || ''
+    return `**Grep** \`${p}\``
+  }
+  if (tt === 'todowrite' || tt === 'todo_write') {
+    return `**TodoWrite** \`Todo List\``
+  }
+  return `**${t}**`
+}
+
 type SDKMessage = any
 
 export class ClaudeAdapter {
@@ -66,21 +108,19 @@ export class ClaudeAdapter {
         const initCtx = '\n<initial_context>\n## Project Directory Structure (node_modules are already installed)\n.eslintrc.json\n.gitignore\nnext.config.mjs\nnext-env.d.ts\npackage.json\npostcss.config.mjs\nREADME.md\ntailwind.config.ts\ntsconfig.json\n.env\nsrc/app/favicon.ico\nsrc/app/globals.css\nsrc/app/layout.tsx\nsrc/app/page.tsx\npublic/\nnode_modules/\n</initial_context>'
         text += initCtx
       }
-      parts.push({ type: 'text', text })
+      // Claude Code parity: do NOT attach image blocks. Instead, append image path refs to text.
       if (opts.images && opts.images.length) {
-        for (const img of opts.images) {
-          let b64 = (img.base64_data || '') as string
-          if (!b64 && img.url && img.url.startsWith('data:')) {
-            try { b64 = img.url.split(',', 1)[1] || '' } catch {}
-          }
-          if (!b64 && img.path) {
-            try { const data = await fsp.readFile(img.path); b64 = data.toString('base64') } catch {}
-          }
-          if (b64) {
-            parts.push({ type: 'image', source: { type: 'base64', media_type: img.mime_type || 'image/png', data: b64 } })
-          }
+        const refs: string[] = []
+        for (let i = 0; i < opts.images.length; i++) {
+          const img: any = opts.images[i]
+          const p = img?.path as string | undefined
+          const n = img?.name as string | undefined
+          if (p && typeof p === 'string') refs.push(`Image #${i + 1} path: ${p}`)
+          else if (n && typeof n === 'string') refs.push(`Image #${i + 1} path: ${n}`)
         }
+        if (refs.length) text += `\n\n${refs.join('\n')}`
       }
+      parts.push({ type: 'text', text })
       return parts
     }
 
@@ -127,6 +167,7 @@ export class ClaudeAdapter {
                 const toolName = block?.name || block?.tool || 'Tool'
                 const toolInput = block?.input || {}
                 const summary = summarizeTool(toolName, toolInput)
+                console.log(`🔧 ${summary}`)
                 yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'claude', event_type: 'tool_call', tool_name: toolName, tool_input: toolInput, original_event: block } }
               }
             }
@@ -158,44 +199,3 @@ function projectIdFromPath(repoCwd: string): string {
 }
 
 export default ClaudeAdapter
-
-function summarizeTool(tool: string, args: any): string {
-  const t = String(tool || '')
-  const tt = t.toLowerCase()
-  if (tt === 'bash' || tt === 'exec' || tt === 'exec_command') {
-    const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
-    return `**Bash** \`${cmd}\``
-  }
-  if (tt === 'websearch' || tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch') {
-    const q = args?.query || args?.q || ''
-    return `**WebSearch** \`${q}\``
-  }
-  if (tt === 'read') {
-    const p = args?.path || args?.file || ''
-    return `**Read** \`${p}\``
-  }
-  if (tt === 'write') {
-    const p = args?.path || args?.file || ''
-    return `**Write** \`${p}\``
-  }
-  if (tt === 'edit' || tt === 'multiedit') {
-    const p = args?.path || args?.file || ''
-    return `**Edit** \`${p}\``
-  }
-  if (tt === 'ls') {
-    const p = args?.path || args?.dir || ''
-    return `**LS** \`${p}\``
-  }
-  if (tt === 'glob') {
-    const p = args?.pattern || ''
-    return `**Glob** \`${p}\``
-  }
-  if (tt === 'grep') {
-    const p = args?.pattern || ''
-    return `**Grep** \`${p}\``
-  }
-  if (tt === 'todowrite' || tt === 'todo_write') {
-    return `**TodoWrite** \`Todo List\``
-  }
-  return `**${t}**`
-}

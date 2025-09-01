@@ -10,6 +10,7 @@ import { getPrisma } from '@repo/db'
 import { startPreview, getStatus } from '@repo/services/preview-runtime'
 import { wsRegistry } from '@repo/ws'
 import { commitAll, hasChanges } from '@repo/services-git'
+import { ensureDependenciesBackground } from '@repo/services-preview-runtime'
 import { getAdapter } from './adapters/registry'
 import { ensureGeminiMd, ensureQwenMd, ensureClaudeConfig } from './provider-docs'
 export { getCliStatusSingle, getAllCliStatus } from './status'
@@ -60,7 +61,24 @@ async function completeSession(prisma: any, sessionId: string, success: boolean)
 
 async function appendMessage(prisma: any, projectId: string, role: string, content: string, conversationId?: string | null, sessionId?: string | null, opts?: { messageType?: string; metadata?: any; parentMessageId?: string | null; cliSource?: string | null }) {
   const id = (globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID()
-  return prisma.message.create({ data: { id, projectId, role, content, conversationId: conversationId ?? null, sessionId: sessionId ?? null, messageType: opts?.messageType ?? null, metadataJson: opts?.metadata ? JSON.stringify(opts.metadata) : null, parentMessageId: opts?.parentMessageId ?? null, cliSource: opts?.cliSource ?? null } })
+  
+  // Create message with immediate flush to ensure DB consistency
+  const message = await prisma.message.create({ 
+    data: { 
+      id, 
+      projectId, 
+      role, 
+      content, 
+      conversationId: conversationId ?? null, 
+      sessionId: sessionId ?? null, 
+      messageType: opts?.messageType ?? null, 
+      metadataJson: opts?.metadata ? JSON.stringify(opts.metadata) : null, 
+      parentMessageId: opts?.parentMessageId ?? null, 
+      cliSource: opts?.cliSource ?? null 
+    } 
+  })
+  
+  return message
 }
 
 async function runAdapter(_: { projectId: string; instruction: string; cliType: string; mode: 'act' | 'chat'; projectRepo: string | null; conversationId: string; sessionId: string; isInitial?: boolean; images?: any[] }): Promise<ExecResult> {
@@ -82,6 +100,11 @@ async function runAdapter(_: { projectId: string; instruction: string; cliType: 
       } else if (ev.kind === 'message') {
         const m = await appendMessage(prisma as any, _.projectId, ev.role || 'assistant', ev.content || '', _.conversationId, _.sessionId, { messageType: ev.messageType || 'chat', metadata: ev.metadata || null, parentMessageId: ev.parentMessageId || null, cliSource: _.cliType })
         lastAssistantMessageId = m.id
+        
+        // FastAPI-style: Ensure DB transaction is fully committed before WebSocket broadcast
+        // Reduced delay for better UX while maintaining DB consistency
+        await new Promise(resolve => setTimeout(resolve, 10)); // Minimal delay for DB consistency
+        
         wsRegistry.broadcast(_.projectId, { type: 'message', data: { id: m.id, role: m.role, message_type: m.messageType ?? null, content: m.content, metadata_json: ev.metadata || null, parent_message_id: m.parentMessageId ?? null, session_id: m.sessionId ?? null, conversation_id: m.conversationId ?? null, cli_source: m.cliSource ?? null, created_at: m.createdAt }, timestamp: new Date().toISOString() } as any)
         if (ev.metadata && ev.metadata.changes_made) changesDetected = true
       } else if (ev.kind === 'result') {
@@ -100,6 +123,9 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
   const project = await (prisma as any).project.findUnique({ where: { id: projectId } })
   if (!project) throw new Error('Project not found')
   const cliType: string = (req.cli_preference ?? project.preferredCli ?? 'claude') as string
+  
+  // Tool call logging (one-line format like FastAPI)
+  console.log(`🔧 ${mode.toUpperCase()} ${projectId.slice(-8)} "${req.instruction.slice(0, 50)}${req.instruction.length > 50 ? '...' : ''}" (${cliType}${req.is_initial_prompt ? ' initial' : ''})`)
   // Before first message, ensure provider-specific prompt docs exist at repo root
   if (req.is_initial_prompt && project.repoPath) {
     try {
@@ -181,6 +207,14 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
 
   let result: ExecResult
   try {
+    // If this is the initial prompt, kick off dependency installation in background immediately
+    try {
+      if (req.is_initial_prompt && project.repoPath) {
+        // fire-and-forget; chat continues
+        void ensureDependenciesBackground(projectId, project.repoPath)
+      }
+    } catch {}
+
     result = await runAdapter({
       projectId,
       instruction: req.instruction,
@@ -248,8 +282,19 @@ export async function executeInstruction(projectId: string, req: ActRequest, mod
         const repo = project.repoPath as string | null
         if (repo) {
           const st = getStatus(projectId)
+          console.log(`[DEBUG] Preview auto-start check:`, {
+            projectId,
+            request_id: req.request_id,
+            repo_exists: !!repo,
+            preview_running: st.running,
+            will_start: !st.running,
+            timestamp: new Date().toISOString()
+          })
           if (!st.running) {
+            console.log(`[DEBUG] 🚀 Starting preview server for initial prompt:`, { projectId, request_id: req.request_id })
             await startPreview(projectId, repo)
+          } else {
+            console.log(`[DEBUG] ⏭️ Preview server already running, skipping start:`, { projectId, request_id: req.request_id })
           }
         }
       } catch {}

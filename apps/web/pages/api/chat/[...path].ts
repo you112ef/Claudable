@@ -15,21 +15,34 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         const idx = parts.indexOf('chat')
         const projectId = idx >= 0 ? parts[idx + 1] : null
         if (!projectId) { try { (socket as any).close() } catch {}; return }
+        
         wsRegistry.add(projectId, socket as any)
         ;(socket as any).on('message', (data: any) => {
-          try { if (String(data) === 'ping') (socket as any).send('pong') } catch {}
+          try { 
+            // Validate UTF-8 encoding
+            const message = Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
+            if (message === 'ping') (socket as any).send('pong') 
+          } catch (error) {
+            // Silent failure - invalid message format
+          }
         })
         const onGone = async () => {
           wsRegistry.remove(projectId, socket as any)
+          const remainingConnections = wsRegistry.count(projectId)
+          
           // If no more connections for this project, stop its preview server
-          try {
-            if (wsRegistry.count(projectId) === 0) {
+          if (remainingConnections === 0) {
+            try {
               await stopPreview(projectId)
+            } catch (e) {
+              // Silent failure - preview may not be running
             }
-          } catch {}
+          }
         }
         socket.on('close', onGone)
-        socket.on('error', onGone)
+        socket.on('error', (error) => {
+          onGone()
+        })
       } catch {}
     })
     anyRes.socket.server.__WSS__ = wss

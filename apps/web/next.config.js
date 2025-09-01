@@ -1,5 +1,24 @@
 /** @type {import('next').NextConfig} */
 const path = require('path')
+
+// Override Next.js console.log in development to reduce noise
+if (process.env.NODE_ENV === 'development') {
+  const originalLog = console.log
+  console.log = (...args) => {
+    const message = args.join(' ')
+    // Filter out API request logs and compilation logs
+    if (
+      message.includes('GET /api') ||
+      message.includes('POST /api') ||
+      message.includes('✓ Compiled') ||
+      message.includes('○ Compiling')
+    ) {
+      return
+    }
+    originalLog(...args)
+  }
+}
+
 const nextConfig = {
   reactStrictMode: true,
   productionBrowserSourceMaps: false,

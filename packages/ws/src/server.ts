@@ -42,10 +42,7 @@ function ensureServer() {
       try { (socket as any).close() } catch {}
     }
   })
-  server.listen(port, () => {
-    // eslint-disable-next-line no-console
-    console.log(`[ws] server listening on ws://localhost:${port}`)
-  })
+  server.listen(port)
   global.__WS_SERVER__ = server
   return server
 }

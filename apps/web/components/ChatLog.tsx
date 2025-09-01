@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useRef, ReactElement } from 'react';
+import React, { useEffect, useState, useRef, ReactElement, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -151,11 +151,15 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const activeCheckRef = useRef<NodeJS.Timeout | null>(null);
+  // Track whether current WS connection has actually delivered at least one message
+  const wsHasDeliveredRef = useRef<boolean>(false);
 
   // Use the centralized WebSocket hook
   const { isConnected } = useWebSocket({
     projectId,
     onMessage: (message) => {
+      // Mark that WS stream is actively delivering
+      wsHasDeliveredRef.current = true;
       // Handle chat messages from WebSocket
       const chatMessage: ChatMessage = {
         id: message.id || `${Date.now()}-${Math.random()}`,
@@ -178,6 +182,10 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
+      }
+      if (activeCheckRef.current) {
+        clearInterval(activeCheckRef.current);
+        activeCheckRef.current = null;
       }
       setMessages(prev => {
         const exists = prev.some(msg => msg.id === chatMessage.id);
@@ -246,13 +254,15 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       }
     },
     onConnect: () => {
+      // Keep polling until we actually receive at least one WS message
+      wsHasDeliveredRef.current = false;
       onWebSocketConnect?.();
     },
     onDisconnect: () => {
       onWebSocketDisconnect?.();
     },
     onError: (error) => {
-      console.error('🔌 [WebSocket] Error:', error);
+      // Silent error handling
     }
   });
 
@@ -303,6 +313,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
 
   // Poll session status periodically
   const startSessionPolling = (sessionId: string) => {
+    // Do not start session polling while WebSocket is actively delivering messages
+    if (isConnected && wsHasDeliveredRef.current) return;
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
@@ -313,8 +325,10 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         if (response.ok) {
           const sessionStatus = await response.json();
           
-          // Opportunistically refresh chat history while the session is active
-          try { await loadChatHistory(); } catch {}
+          // Skip redundant chat history refresh during active WebSocket streaming
+          if (!isConnected || !wsHasDeliveredRef.current) {
+            try { await loadChatHistory(); } catch {}
+          }
 
           if (sessionStatus.status !== 'active') {
             setActiveSession(null);
@@ -336,9 +350,14 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   };
 
   // Load chat history
-  const loadChatHistory = async () => {
+  const loadChatHistory = async (force = false) => {
     try {
-      setIsLoading(true);
+      // Skip loading state update if WebSocket is actively delivering messages (prevents flickering)
+      if (!force && isConnected && wsHasDeliveredRef.current) {
+        // Silent refresh - don't show loading state
+      } else {
+        setIsLoading(true);
+      }
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/messages`);
       if (response.ok) {
         const chatMessages: ChatMessage[] = await response.json();
@@ -347,7 +366,10 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     } catch (error) {
       console.error('Failed to load chat history:', error);
     } finally {
-      setIsLoading(false);
+      // Only update loading state if we actually set it to true earlier
+      if (force || !isConnected || !wsHasDeliveredRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -359,7 +381,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     
     const loadData = async () => {
       if (mounted) {
-        await loadChatHistory();
+        await loadChatHistory(true); // Force initial load
         await checkActiveSession();
       }
     };
@@ -382,9 +404,26 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   // Opportunistic active session detector (covers missing WS start event)
   useEffect(() => {
     if (!projectId) return;
-    if (activeCheckRef.current) return; // already running
+    // If WS is connected AND actively delivering, stop detector
+    if (isConnected && wsHasDeliveredRef.current) {
+      if (activeCheckRef.current) {
+        clearInterval(activeCheckRef.current);
+        activeCheckRef.current = null;
+      }
+      return;
+    }
+    // Already running
+    if (activeCheckRef.current) return;
     activeCheckRef.current = setInterval(async () => {
       try {
+        // Double-check: if WS is now actively delivering, stop this interval
+        if (isConnected && wsHasDeliveredRef.current) {
+          if (activeCheckRef.current) {
+            clearInterval(activeCheckRef.current);
+            activeCheckRef.current = null;
+          }
+          return;
+        }
         // If already polling a known session, skip
         if (pollIntervalRef.current) return;
         const res = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
@@ -404,7 +443,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         activeCheckRef.current = null;
       }
     };
-  }, [projectId]);
+  }, [projectId, isConnected]);
 
   // Handle log entries from other WebSocket data
   const handleWebSocketData = (data: any) => {
@@ -665,10 +704,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       return false;
     }
     
-    // Hide tool_result messages (internal processing results)
-    if (message.message_type === 'tool_result') {
-      return false;
-    }
+    // Show tool_result messages (they contain important tool execution info)
+    // Removed the hiding of tool_result messages to show tool calls
     
     // Hide system initialization messages
     if (message.role === 'system' && message.message_type === 'system') {
@@ -686,6 +723,23 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     // Show all other messages (user messages, assistant text responses, tool use summaries)
     return true;
   };
+
+  // ✅ Optimize message filtering to prevent unnecessary re-renders
+  const displayableMessages = useMemo(() => {
+    return messages.filter(shouldDisplayMessage);
+  }, [messages]);
+
+  // ✅ Track the last message ID to only animate new messages
+  const [lastMessageId, setLastMessageId] = useState<string>('');
+  
+  useEffect(() => {
+    if (displayableMessages.length > 0) {
+      const latestMessage = displayableMessages[displayableMessages.length - 1];
+      if (latestMessage.id !== lastMessageId) {
+        setLastMessageId(latestMessage.id);
+      }
+    }
+  }, [displayableMessages, lastMessageId]);
 
   const renderLogEntry = (log: LogEntry) => {
     switch (log.type) {
@@ -839,7 +893,6 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-black">
-
       {/* 메시지와 로그를 함께 표시 */}
       <div className="flex-1 overflow-y-auto px-8 py-3 space-y-2 custom-scrollbar dark:chat-scrollbar">
         {isLoading && (
@@ -861,16 +914,12 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         )}
         
         <AnimatePresence>
-          {/* Render chat messages */}
-          {messages.filter(shouldDisplayMessage).map((message) => {
+          {/* Render chat messages with optimized animation */}
+          {displayableMessages.map((message, index) => {
+            const isNewMessage = message.id === lastMessageId;
             
-            return (
-              <div className="mb-4" key={`message-${message.id}`}>
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                >
+            const messageContent = (
+              <>
                 {message.role === 'user' ? (
                   // User message - boxed on the right
                   <div className="flex justify-end">
@@ -994,15 +1043,34 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
                     )}
                   </div>
                 )}
-                </motion.div>
+              </>
+            );
+
+            return (
+              <div className="mb-4" key={`message-${message.id}`}>
+                {isNewMessage ? (
+                  // ✅ Only animate new messages to prevent flickering
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                  >
+                    {messageContent}
+                  </motion.div>
+                ) : (
+                  // ✅ Static render for existing messages
+                  <div>
+                    {messageContent}
+                  </div>
+                )}
               </div>
             );
           })}
           
           {/* Render filtered agent logs as plain text */}
           {logs.filter(log => {
-            // Hide internal tool results and system logs
-            const hideTypes = ['tool_result', 'tool_start', 'system'];
+            // Hide internal system logs but show tool results for transparency
+            const hideTypes = ['system'];
             return !hideTypes.includes(log.type);
           }).map((log) => (
             <div key={`log-${log.id}`} className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>

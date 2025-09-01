@@ -60,13 +60,27 @@ class ProjectRegistry {
   broadcast(projectId: string, event: WSEvent) {
     const set = this.rooms.get(projectId)
     if (!set) return
-    const payload = JSON.stringify(event)
-    for (const ws of Array.from(set)) {
-      try {
-        ws.send(payload)
-      } catch (_) {
-        set.delete(ws)
+    
+    try {
+      // Ensure UTF-8 safe JSON serialization
+      const payload = JSON.stringify(event, (key, value) => {
+        if (typeof value === 'string') {
+          // Replace invalid UTF-8 sequences and control characters
+          return value.replace(/[\x00-\x1F\x7F-\x9F]/g, '').replace(/[\uFFFE\uFFFF]/g, '')
+        }
+        return value
+      })
+      
+      for (const ws of Array.from(set)) {
+        try {
+          // Send as text frame with explicit UTF-8 encoding
+          ws.send(payload)
+        } catch (error) {
+          set.delete(ws)
+        }
       }
+    } catch (error) {
+      // Silent failure - JSON serialization failed
     }
   }
 }

@@ -22,7 +22,10 @@ export async function GET(req: Request, ctx: { params: { projectId: string } }) 
       return NextResponse.json({ detail: 'Project repository not found' }, { status: 400 })
     }
     const entries = await listTree(repoRoot, dir)
-    return NextResponse.json(entries)
+    const response = NextResponse.json(entries)
+    // Reduce log noise for file tree requests
+    response.headers.set('x-log-level', 'debug')
+    return response
   } catch (e: any) {
     const msg = e?.message || ''
     if (msg === 'Invalid path') return NextResponse.json({ detail: 'Invalid path' }, { status: 400 })

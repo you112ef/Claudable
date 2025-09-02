@@ -208,7 +208,7 @@ export default function ChatPage({ params }: Params) {
   const [isFileUpdating, setIsFileUpdating] = useState(false);
   const wsReadyRef = useRef(false);
 
-  // Immediately show initial prompt, then execute when WebSocket is ready
+  // Guarded trigger that can be called from multiple places safely
   const triggerInitialPromptIfNeeded = useCallback(() => {
     const initialPromptFromUrl = searchParams?.get('initial_prompt');
     if (!initialPromptFromUrl) return;
@@ -1045,14 +1045,6 @@ export default function ChatPage({ params }: Params) {
       
     } catch (error) {
       console.error('Act 실행 오류:', error);
-      
-      // 새로고침/페이지 언로드로 인한 네트워크 에러는 사용자에게 표시하지 않음
-      const errorMessage = String(error);
-      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('AbortError')) {
-        console.log('🔄 Request aborted due to page navigation - suppressing error alert');
-        return;
-      }
-      
       alert(`실행 중 오류가 발생했습니다: ${error}`);
     } finally {
       setIsRunning(false);
@@ -1155,10 +1147,8 @@ export default function ChatPage({ params }: Params) {
       // Clear stored init images after dispatch
       try { sessionStorage.removeItem(`init_images_${projectId}`); } catch {}
       
-      // Keep the prompt visible for a moment, then clear it after the message appears
-      setTimeout(() => {
-        setPrompt('');
-      }, 2000);
+      // Clear the prompt input after sending
+      setPrompt('');
       
       // Clean up URL by removing the initial_prompt parameter
       const newUrl = new URL(window.location.href);
@@ -1826,74 +1816,18 @@ export default function ChatPage({ params }: Params) {
                     style={{ height: '100%' }}
                   >
                 {previewUrl ? (
-                  <div className="relative w-full h-full flex flex-col bg-gray-100 dark:bg-gray-800">
-                    {/* Route Navigation Bar */}
-                    <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center gap-2">
-                      {/* URL Bar */}
-                      <div className="flex-1 flex items-center bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-1.5">
-                        <span className="text-sm text-gray-500 dark:text-gray-400 mr-1">/</span>
-                        <input
-                          type="text"
-                          value={currentRoute.startsWith('/') ? currentRoute.slice(1) : currentRoute}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setCurrentRoute(value ? `/${value}` : '/');
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              navigateToRoute(currentRoute);
-                            }
-                          }}
-                          className="flex-1 bg-transparent text-sm text-gray-700 dark:text-gray-300 outline-none"
-                          placeholder="Enter route (e.g., about, contact)"
-                        />
-                        <button
-                          onClick={() => navigateToRoute(currentRoute)}
-                          className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                        >
-                          <FaArrowRight size={12} />
-                        </button>
-                      </div>
-                      
-                      {/* Device Mode Toggle */}
-                      <button
-                        aria-label="Desktop preview"
-                        className={`p-1.5 rounded transition-colors ${
-                          deviceMode === 'desktop' 
-                            ? 'text-blue-600 dark:text-blue-400' 
-                            : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
-                        }`}
-                        onClick={() => setDeviceMode('desktop')}
-                      >
-                        <FaDesktop size={16} />
-                      </button>
-                      <button
-                        aria-label="Mobile preview"
-                        className={`p-1.5 rounded transition-colors ${
-                          deviceMode === 'mobile' 
-                            ? 'text-blue-600 dark:text-blue-400' 
-                            : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
-                        }`}
-                        onClick={() => setDeviceMode('mobile')}
-                      >
-                        <FaMobileAlt size={16} />
-                      </button>
-                    </div>
-                    
-                    {/* Iframe Container */}
-                    <div className="flex-1 relative flex items-center justify-center">
-                      <div 
-                        className={`bg-white dark:bg-gray-900 ${
-                          deviceMode === 'mobile' 
-                            ? 'w-[375px] h-[667px] rounded-[25px] border-8 border-gray-800 shadow-2xl' 
-                            : 'w-full h-full'
-                        } overflow-hidden`}
-                      >
-                        <iframe 
-                          key={`preview-${projectId}`}
-                          ref={iframeRef}
-                          className="w-full h-full border-none bg-white dark:bg-gray-800"
-                          src={previewUrl}
+                  <div className="relative w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                    <div 
+                      className={`bg-white dark:bg-gray-900 ${
+                        deviceMode === 'mobile' 
+                          ? 'w-[375px] h-[667px] rounded-[25px] border-8 border-gray-800 shadow-2xl' 
+                          : 'w-full h-full'
+                      } overflow-hidden`}
+                    >
+                      <iframe 
+                        ref={iframeRef}
+                        className="w-full h-full border-none bg-white dark:bg-gray-800"
+                        src={previewUrl}
                         onError={() => {
                           // Show error overlay
                           const overlay = document.getElementById('iframe-error-overlay');

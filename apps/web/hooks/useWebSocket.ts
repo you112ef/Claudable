@@ -26,6 +26,7 @@ export function useWebSocket({
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectionAttemptsRef = useRef(0);
+  const lastPrimeAtRef = useRef<number>(0);
   const shouldReconnectRef = useRef(true);
   const [isConnected, setIsConnected] = useState(false);
 
@@ -55,20 +56,28 @@ export function useWebSocket({
     try {
       const isHttps = typeof window !== 'undefined' ? window.location.protocol === 'https:' : false;
       const defaultProto = isHttps ? 'wss' : 'ws';
-      const wsBase = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `${defaultProto}://${window.location.host}` : 'ws://localhost:3000');
+      // Use same-origin WebSocket endpoint for App Router server
+      const wsBase = (typeof window !== 'undefined' ? `${defaultProto}://${window.location.host}` : 'ws://localhost:3000');
       const fullUrl = `${wsBase}/api/chat/${projectId}`;
 
-      // Ensure the Next.js server has attached the WebSocketServer by
-      // triggering the HTTP handler and waiting for it to complete.
+      // Best-effort: try to prime WS server, but never abort on failure
       try {
-        await fetch(`/api/chat/${projectId}`);
-        // Reduced wait time for faster initial prompt display
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Throttle priming to avoid spamming on rapid retries
+        const now = Date.now();
+        if (now - lastPrimeAtRef.current > 1500) {
+          lastPrimeAtRef.current = now;
+          await fetch(`/api/chat/${projectId}`);
+        }
       } catch (error) {
-        return;
+        // Proceed regardless of priming failure
       }
 
       const ws = new WebSocket(fullUrl);
+
+      // Guard: connection timeout to avoid hanging sockets on failed handshake
+      let connectTimeout: NodeJS.Timeout | null = setTimeout(() => {
+        try { ws.close(); } catch {}
+      }, 3000);
 
       ws.onopen = () => {
         setIsConnected(true);
@@ -79,6 +88,7 @@ export function useWebSocket({
         pingIntervalRef.current = setInterval(() => {
           try { ws.send('ping'); } catch {}
         }, 25000);
+        if (connectTimeout) { clearTimeout(connectTimeout); connectTimeout = null; }
       };
 
       ws.onmessage = (event) => {
@@ -130,18 +140,24 @@ export function useWebSocket({
           clearInterval(pingIntervalRef.current);
           pingIntervalRef.current = null;
         }
+        if (connectTimeout) { clearTimeout(connectTimeout); connectTimeout = null; }
         
         // Only reconnect if we should and haven't exceeded attempts
         if (shouldReconnectRef.current) {
           const attempts = connectionAttemptsRef.current + 1;
           connectionAttemptsRef.current = attempts;
-          
-          if (attempts < 5) {
-            const delay = Math.min(1000 * Math.pow(2, attempts), 10000);
-            reconnectTimeoutRef.current = setTimeout(() => {
-              connect().catch(() => {});
-            }, delay);
-          }
+
+          // Exponential backoff with jitter, capped at 60s, fast ramp-up initially
+          const base = attempts <= 1 ? 500 : Math.min(60000, 500 * Math.pow(2, attempts));
+          const jitter = Math.floor(Math.random() * 250);
+          const delay = Math.min(60000, base + jitter);
+
+          // Best-effort prime just before reconnect (throttled above in connect)
+          try { fetch(`/api/chat/${projectId}`).catch(() => {}); } catch {}
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect().catch(() => {});
+          }, delay);
         }
       };
 

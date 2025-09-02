@@ -243,9 +243,9 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
     let reconnectTimeout: NodeJS.Timeout | null = null;
 
     const connect = () => {
-      // Pre-initialize WS server by hitting the HTTP handler once
-      try { fetch(`/api/chat/${projectId}`).catch(() => {}); } catch {}
-      const ws = new WebSocket(`${WS_BASE}/api/chat/${projectId}`);
+      // Pre-initialize WS server (best-effort); use the new WS endpoint path
+      try { fetch(`/api/ws/chat/${projectId}`).catch(() => {}); } catch {}
+      const ws = new WebSocket(`${WS_BASE}/api/ws/chat/${projectId}`);
       
       ws.onopen = () => {
         reconnectAttempts = 0; // Reset attempts on successful connection

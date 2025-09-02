@@ -146,6 +146,34 @@ async function saveInstallHash(repoPath: string) {
   await fsp.writeFile(installHashPath(repoPath), h)
 }
 
+async function normalizeToNpm(repoPath: string): Promise<void> {
+  const pnpmLock = path.join(repoPath, 'pnpm-lock.yaml');
+  const yarnLock = path.join(repoPath, 'yarn.lock');
+  const pnpmDir = path.join(repoPath, 'node_modules', '.pnpm');
+  
+  if (fs.existsSync(pnpmLock) || fs.existsSync(yarnLock) || fs.existsSync(pnpmDir)) {
+    console.log('Detected non-npm artifacts (pnpm/yarn). Normalizing to npm...');
+    try {
+      // Remove conflicting node_modules to avoid arborist crashes
+      await fsp.rm(path.join(repoPath, 'node_modules'), { recursive: true, force: true });
+      
+      // Remove other lockfiles
+      if (fs.existsSync(pnpmLock)) {
+        await fsp.rm(pnpmLock);
+        console.log('Removed pnpm-lock.yaml');
+      }
+      if (fs.existsSync(yarnLock)) {
+        await fsp.rm(yarnLock);
+        console.log('Removed yarn.lock');
+      }
+      
+      console.log('NPM normalization completed');
+    } catch (e) {
+      console.warn('Warning during npm normalization:', e);
+    }
+  }
+}
+
 export async function startPreview(projectId: string, repoPath: string, port?: number): Promise<{ success: boolean; port?: number; url?: string; process_name?: string; process_id?: number; error?: string }> {
   // 🔒 Concurrency Control: Check if already starting
   const existingStart = startingRegistry.get(projectId)
@@ -188,7 +216,11 @@ async function startPreviewInternal(projectId: string, repoPath: string, port?: 
       BROWSER: 'none',
     }
 
+    // Normalize repository to npm to avoid mixed package managers
+    await normalizeToNpm(repoPath)
+
     if (await shouldInstallDeps(repoPath)) {
+      console.log(`Installing dependencies for project ${projectId} with npm...`)
       await new Promise<void>((resolve, reject) => {
         const child = spawn('npm', ['install'], { cwd: repoPath, env })
         let err = ''
@@ -199,7 +231,9 @@ async function startPreviewInternal(projectId: string, repoPath: string, port?: 
         child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err || 'npm install failed'))))
       })
       await saveInstallHash(repoPath)
+      console.log(`Dependencies installed successfully for project ${projectId} using npm`)
     } else {
+      console.log(`Dependencies already up to date for project ${projectId}, skipping npm install`)
     }
 
     const child = spawn('npm', ['run', 'dev', '--', '-p', String(p)], { 

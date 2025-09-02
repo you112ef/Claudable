@@ -57,11 +57,18 @@ class CodexAdapter implements CLIAdapter {
       '-c', `instructions=${JSON.stringify(autoInstructions)}`,
     ]
 
-    // Resume from latest rollout if available
+    // Resume from latest rollout if available (can be disabled by environment variable)
+    const enableResume = process.env.CLAUDABLE_CODEX_RESUME === '1';
     const projectId = projectIdFromPath(repoCwd)
-    const [resumePath, model] = await Promise.all([getCodexRolloutPath(projectId), Promise.resolve(process.env.CODEX_MODEL || 'gpt-5')])
-    if (resumePath) {
-      args.push('-c', `experimental_resume=${resumePath}`)
+    
+    if (enableResume) {
+      const [resumePath, model] = await Promise.all([getCodexRolloutPath(projectId), Promise.resolve(process.env.CODEX_MODEL || 'gpt-5')])
+      if (resumePath) {
+        args.push('-c', `experimental_resume=${resumePath}`)
+        console.log(`Resuming Codex from rollout: ${resumePath}`);
+      }
+    } else {
+      console.log('Codex resume disabled (fresh session)');
     }
 
     const env = { ...process.env }
@@ -69,7 +76,13 @@ class CodexAdapter implements CLIAdapter {
 
     let agentMessageBuffer = ''
     let stderrBuf = ''
-    child.stderr.on('data', (d) => { stderrBuf += String(d) })
+    child.stderr.on('data', (d) => { 
+      const rawStderr = String(d);
+      const filteredStderr = filterCliOutput(rawStderr);
+      if (filteredStderr.trim()) {
+        stderrBuf += filteredStderr;
+      }
+    })
 
     const decoder = new TextDecoder()
     let buffer = ''
@@ -591,16 +604,36 @@ function projectIdFromPath(repoCwd: string): string {
   return parts[parts.length - 1]
 }
 
+function filterCliOutput(output: string): string {
+  return output
+    .split('\n')
+    .filter(line => !line.toLowerCase().includes('polling for token'))
+    .filter(line => !line.includes('[ERROR] [ImportProcessor]'))
+    .filter(line => !(line.includes('ENOENT') && 
+      (line.includes('node_modules') || line.includes('tailwind') || line.includes('supabase'))))
+    .filter(line => line && !line.startsWith('DEBUG'))
+    .join('\n');
+}
+
 async function ensureAgentsMd(projectPath: string) {
+  // Check if AGENTS.md creation is disabled by environment variable
+  if (process.env.CLAUDABLE_DISABLE_AGENTS_MD === '1') {
+    console.log('AGENTS.md creation disabled by environment variable');
+    return;
+  }
+
   const agentPath = path.join(projectPath, 'AGENTS.md')
   try {
     await fsp.access(agentPath)
     return
   } catch {}
   try {
+    console.log('Creating AGENTS.md in project')
     const content = loadSystemPrompt()
     await fsp.writeFile(agentPath, content, 'utf8')
-  } catch {}
+  } catch (e) {
+    console.warn('Failed to create AGENTS.md:', e)
+  }
 }
 
 async function getCursorSessionId(projectId: string): Promise<string | null> {

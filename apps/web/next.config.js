@@ -30,7 +30,7 @@ const nextConfig = {
   },
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // Resolve monorepo packages via alias to source folders
     const r = (p) => path.resolve(__dirname, p)
     Object.assign(config.resolve.alias, {
@@ -50,6 +50,19 @@ const nextConfig = {
       '@repo/services-vercel': r('../../packages/services/vercel/src'),
       '@repo/logging': r('../../packages/logging/src'),
     })
+
+    // Ensure server runtime loads chunks from ./chunks
+    // In some setups, Webpack's default chunkFilename may degrade to "[id].js",
+    // causing the server runtime to require missing "./<id>.js" instead of "./chunks/<id>.js".
+    // Force the expected chunk filenames for the Node server build.
+    if (isServer) {
+      config.output = {
+        ...config.output,
+        chunkFilename: 'chunks/[id].js',
+        hotUpdateChunkFilename: 'chunks/[id].[fullhash].hot-update.js',
+        hotUpdateMainFilename: 'chunks/[runtime].[fullhash].hot-update.json',
+      }
+    }
     return config
   },
 };

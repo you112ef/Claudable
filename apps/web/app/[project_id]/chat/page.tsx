@@ -15,7 +15,8 @@ import { useGlobalSettings } from '@/contexts/GlobalSettingsContext';
 
 // 더 이상 ProjectSettings을 로드하지 않음 (메인 페이지에서 글로벌 설정으로 관리)
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
+// Always use same-origin Next.js API routes after migration
+const API_BASE = '';
 
 // Define assistant brand colors
 const assistantBrandColors: { [key: string]: string } = {
@@ -207,23 +208,37 @@ export default function ChatPage({ params }: Params) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isFileUpdating, setIsFileUpdating] = useState(false);
   const wsReadyRef = useRef(false);
+  
+  // ★ NEW: Project 정보를 저장할 state 추가
+  const [projectInfo, setProjectInfo] = useState<any>(null);
 
   // Guarded trigger that can be called from multiple places safely
   const triggerInitialPromptIfNeeded = useCallback(() => {
-    const initialPromptFromUrl = searchParams?.get('initial_prompt');
-    if (!initialPromptFromUrl) return;
-    if (initialPromptSentRef.current) return;
+    // ★ FIXED: Use DB stored initial prompt instead of URL param
+    const initialPromptFromDb = projectInfo?.initial_prompt;
+    if (!initialPromptFromDb) {
+      console.log('🚫 No initial prompt found in project data');
+      return;
+    }
+    if (initialPromptSentRef.current) {
+      console.log('🚫 Initial prompt already sent');
+      return;
+    }
     // Ensure WS is connected to avoid missing early stream events
     if (!wsReadyRef.current) {
+      console.log('⏱️ WebSocket not ready, retrying in 250ms');
       // Retry shortly after WS connects
       setTimeout(() => triggerInitialPromptIfNeeded(), 250);
       return;
     }
+    
+    console.log('🚀 Executing initial prompt from DB:', initialPromptFromDb.substring(0, 100) + '...');
+    
     // Synchronously guard to prevent double ACT calls
     initialPromptSentRef.current = true;
     setInitialPromptSent(true);
     
-    // Store the selected model and assistant in sessionStorage when returning
+    // Store the selected model and assistant from URL params if provided
     const cliFromUrl = searchParams?.get('cli');
     const modelFromUrl = searchParams?.get('model');
     if (cliFromUrl) {
@@ -234,11 +249,11 @@ export default function ChatPage({ params }: Params) {
     }
     
     // Don't show the initial prompt in the input field
-    // setPrompt(initialPromptFromUrl);
+    // setPrompt(initialPromptFromDb);
     setTimeout(() => {
-      sendInitialPrompt(initialPromptFromUrl);
+      sendInitialPrompt(initialPromptFromDb);
     }, 300);
-  }, [searchParams]);
+  }, [projectInfo, searchParams]);
 
   const loadDeployStatus = useCallback(async () => {
     try {
@@ -845,8 +860,13 @@ export default function ChatPage({ params }: Params) {
       const project = await r.json();
         console.log('📋 Loading project info:', {
           preferred_cli: project.preferred_cli,
-          selected_model: project.selected_model
+          selected_model: project.selected_model,
+          initial_prompt: project.initial_prompt ? 'present' : 'absent'
         });
+        
+        // ★ NEW: Store complete project info in state
+        setProjectInfo(project);
+        
         setProjectName(project.name || `Project ${projectId.slice(0, 8)}`);
         
         // Set CLI and model from project settings if available
@@ -867,23 +887,28 @@ export default function ChatPage({ params }: Params) {
         if (project.initial_prompt) {
           setHasInitialPrompt(true);
           localStorage.setItem(`project_${projectId}_hasInitialPrompt`, 'true');
+          console.log('✅ Project has initial prompt, will trigger after setup');
         } else {
           setHasInitialPrompt(false);
           localStorage.setItem(`project_${projectId}_hasInitialPrompt`, 'false');
+          console.log('ℹ️ Project has no initial prompt');
         }
 
         // Handle project status and possible initial prompt trigger
         if (project.status === 'initializing') {
           setProjectStatus('initializing');
           setIsInitializing(true);
+          console.log('⏱️ Project is initializing, will trigger initial prompt when ready');
           // WebSocket handler will flip to active and call triggerInitialPromptIfNeeded
         } else {
           setProjectStatus('active');
           setIsInitializing(false);
           // Start dependencies if already active
           startDependencyInstallation();
-          // Trigger initial prompt only when provided via URL param
-          triggerInitialPromptIfNeeded();
+          // ★ FIXED: This will now use project.initial_prompt from DB
+          console.log('🔄 Project is active, checking for initial prompt...');
+          // Delay slightly to ensure projectInfo state is updated
+          setTimeout(() => triggerInitialPromptIfNeeded(), 100);
         }
 
         // Always load the file tree after getting project info

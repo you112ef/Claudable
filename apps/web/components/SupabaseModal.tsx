@@ -5,7 +5,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface SupabaseModalProps {
   isOpen: boolean;
@@ -263,7 +262,7 @@ export default function SupabaseModal({ isOpen, onClose, projectId, projectName,
     ];
 
     for (const envVar of envVars) {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}`, {
+      const response = await fetch(`/api/env/${projectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -291,7 +290,7 @@ export default function SupabaseModal({ isOpen, onClose, projectId, projectName,
       }
     };
 
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/services`, {
+    const response = await fetch(`/api/projects/${projectId}/services`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

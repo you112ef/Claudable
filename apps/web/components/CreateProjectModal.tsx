@@ -4,8 +4,8 @@ import { useRouter } from 'next/navigation';
 import { AnimatePresence } from 'framer-motion';
 import { MotionDiv, MotionP } from '../lib/motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
+// Use same-origin WebSocket base (avoid legacy overrides)
+const WS_BASE = (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}` : 'ws://localhost:3000');
 
 interface CLIOption {
   id: string;
@@ -148,8 +148,8 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
     try {
       // Load both global settings and CLI status in parallel
       const [settingsResponse, statusResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/settings/global`),
-        fetch(`${API_BASE}/api/settings/cli-status`)
+        fetch(`/api/settings/global`),
+        fetch(`/api/settings/cli-status`)
       ]);
 
       let settings = null;
@@ -451,7 +451,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
       // 3. Project creation request
       setInitializationStep('Creating project...');
       
-      const apiUrl = `${API_BASE}/api/projects/`;
+      const apiUrl = `/api/projects/`;
       const r = await fetch(apiUrl, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
@@ -479,7 +479,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
       pollInterval = setInterval(async () => {
         try {
           console.log('📊 Polling project status for:', projectUuid);
-          const response = await fetch(`${API_BASE}/api/projects/${projectUuid}`);
+          const response = await fetch(`/api/projects/${projectUuid}`);
           if (response.ok) {
             const project = await response.json();
             console.log('📊 Project status from polling:', project.status);

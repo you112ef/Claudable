@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface EnvVar {
   id: string;
@@ -33,7 +32,7 @@ export default function EnvironmentVariablesTab({ projectId }: EnvironmentVariab
   const loadEnvVars = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}`);
+      const response = await fetch(`/api/env/${projectId}`);
       if (response.ok) {
         const data = await response.json();
         setEnvVars(data);
@@ -52,7 +51,7 @@ export default function EnvironmentVariablesTab({ projectId }: EnvironmentVariab
     setSaveStatus('saving');
     
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}`, {
+      const response = await fetch(`/api/env/${projectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -90,7 +89,7 @@ export default function EnvironmentVariablesTab({ projectId }: EnvironmentVariab
     setSaveStatus('saving');
     
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}/${key}`, {
+      const response = await fetch(`/api/env/${projectId}/${key}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +124,7 @@ export default function EnvironmentVariablesTab({ projectId }: EnvironmentVariab
     setSaveStatus('saving');
     
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}/${key}`, {
+      const response = await fetch(`/api/env/${projectId}/${key}`, {
         method: 'DELETE',
       });
 

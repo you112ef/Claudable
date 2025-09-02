@@ -171,7 +171,6 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
       // ★ NEW: Upload images first to get server URLs and absolute paths
       let preparedImages: any[] | undefined = undefined;
       if (options?.images && options.images.length > 0) {
-        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
         preparedImages = [];
         for (const img of options.images) {
           try {
@@ -191,7 +190,7 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
               // If no blob (unexpected), skip this image gracefully
               continue;
             }
-            const uploadResp = await fetch(`${API_BASE}/api/assets/${projectId}/upload`, {
+            const uploadResp = await fetch(`/api/assets/${projectId}/upload`, {
               method: 'POST',
               body: form
             });
@@ -260,7 +259,6 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
       // Upload images first (same as ACT)
       let preparedImages: any[] | undefined = undefined;
       if (options?.images && options.images.length > 0) {
-        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
         preparedImages = [];
         for (const img of options.images) {
           try {
@@ -276,7 +274,7 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
             } else {
               continue;
             }
-            const uploadResp = await fetch(`${API_BASE}/api/assets/${projectId}/upload`, {
+            const uploadResp = await fetch(`/api/assets/${projectId}/upload`, {
               method: 'POST',
               body: form
             });
@@ -290,8 +288,7 @@ export function useChat({ projectId, conversationId }: UseChatOptions) {
         }
       }
 
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
-      const response = await fetch(`${API_BASE}/api/chat/${projectId}/chat`, {
+      const response = await fetch(`/api/chat/${projectId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

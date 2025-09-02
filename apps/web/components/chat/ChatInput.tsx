@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { SendHorizontal, MessageSquare, Image, Wrench } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface UploadedImage {
   id: string;
@@ -108,7 +107,7 @@ export default function ChatInput({
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE}/api/assets/${projectId}/upload`, {
+        const response = await fetch(`/api/assets/${projectId}/upload`, {
           method: 'POST',
           body: formData
         });

@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ServiceConnectionModal from '@/components/ServiceConnectionModal';
 import EnvironmentVariablesTab from '@/components/EnvironmentVariablesTab';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface CLIOption {
   id: string;
@@ -213,7 +212,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
   const loadProjectInfo = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}`);
+      const response = await fetch(`/api/projects/${projectId}`);
       if (response.ok) {
         const data = await response.json();
         setProjectInfo(data);
@@ -225,7 +224,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
   const loadProjectCLIInfo = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/chat/${projectId}/cli/available`);
+      const response = await fetch(`/api/chat/${projectId}/cli/available`);
       if (response.ok) {
         const data = await response.json();
         setProjectCLIInfo({
@@ -241,7 +240,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
   const loadServiceConnections = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/services`);
+      const response = await fetch(`/api/projects/${projectId}/services`);
       if (response.ok) {
         const data = await response.json();
         setServiceConnections(data);
@@ -253,7 +252,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
   const loadGlobalSettings = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/settings/global`);
+      const response = await fetch(`/api/settings/global`);
       if (response.ok) {
         const data = await response.json();
         setGlobalSettings(data);
@@ -302,7 +301,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
       
-      const response = await fetch(`${API_BASE}/api/settings/cli-status`, {
+      const response = await fetch(`/api/settings/cli-status`, {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -346,7 +345,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
-      const response = await fetch(`${API_BASE}/api/settings/global`, {
+      const response = await fetch(`/api/settings/global`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(globalSettings),
@@ -441,7 +440,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/supabase/connect`, {
+      const response = await fetch(`/api/projects/${projectId}/supabase/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_name: projectName })
@@ -471,7 +470,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/vercel/deploy`, {
+      const response = await fetch(`/api/projects/${projectId}/vercel/deploy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -514,7 +513,7 @@ export default function ProjectSettings({ isOpen, onClose, projectId, projectNam
     
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+      const response = await fetch(`/api/projects/${projectId}`, {
         method: 'DELETE'
       });
       

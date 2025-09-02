@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface GitHubRepoModalProps {
   isOpen: boolean;
@@ -81,7 +80,7 @@ export default function GitHubRepoModal({
     
     try {
       setIsCheckingAvailability(true);
-      const response = await fetch(`${API_BASE}/api/github/check-repo/${encodeURIComponent(name)}`, {
+      const response = await fetch(`/api/github/check-repo/${encodeURIComponent(name)}`, {
         method: 'GET'
       });
       
@@ -166,7 +165,7 @@ export default function GitHubRepoModal({
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/github/connect`, {
+      const response = await fetch(`/api/projects/${projectId}/github/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

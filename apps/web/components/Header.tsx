@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { useTheme } from '@/components/ThemeProvider';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 export default function Header() {
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);

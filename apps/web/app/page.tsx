@@ -12,8 +12,6 @@ import { Image as ImageIcon } from 'lucide-react';
 // Ensure fetch is available
 const fetchAPI = globalThis.fetch || fetch;
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
-
 type Project = { 
   id: string; 
   name: string; 
@@ -127,11 +125,14 @@ export default function HomePage() {
       setSelectedModel(modelFromGlobal);
     } else {
       // Fallback per CLI
-      if (cli === 'claude') setSelectedModel('claude-sonnet-4');
-      else if (cli === 'cursor') setSelectedModel('gpt-5');
-      else if (cli === 'codex') setSelectedModel('gpt-5');
-      else if (cli === 'qwen') setSelectedModel('qwen3-coder-plus');
-      else if (cli === 'gemini') setSelectedModel('gemini-2.5-pro');
+      let fallbackModel: string;
+      if (cli === 'claude') fallbackModel = 'claude-sonnet-4';
+      else if (cli === 'cursor') fallbackModel = 'gpt-5';
+      else if (cli === 'codex') fallbackModel = 'gpt-5';
+      else if (cli === 'qwen') fallbackModel = 'qwen3-coder-plus';
+      else if (cli === 'gemini') fallbackModel = 'gemini-2.5-pro';
+      else fallbackModel = 'claude-sonnet-4';
+      setSelectedModel(fallbackModel);
     }
   }, [globalSettings, usingGlobalDefaults, isInitialLoad]);
   
@@ -167,24 +168,17 @@ export default function HomePage() {
   // Check CLI installation status
   useEffect(() => {
     const checkCLIStatus = async () => {
-      // Initialize with checking status
-      const checkingStatus: { [key: string]: { installed: boolean; checking: boolean; } } = {};
-      assistantOptions.forEach(cli => {
-        checkingStatus[cli.id] = { installed: false, checking: true };
-      });
-      setCLIStatus(checkingStatus);
-      
       try {
-        const response = await fetch(`${API_BASE}/api/settings/cli-status`);
+        const response = await fetch('/api/settings/cli-status');
         if (response.ok) {
           const data = await response.json();
           setCLIStatus(data);
         } else {
-          // Fallback if API endpoint doesn't exist
+          // Fallback if API endpoint doesn't exist - assume common CLIs are installed
           const fallbackStatus: { [key: string]: { installed: boolean; checking: boolean; error: string; } } = {};
           assistantOptions.forEach(cli => {
             fallbackStatus[cli.id] = {
-              installed: cli.id === 'claude' || cli.id === 'cursor' || cli.id === 'codex', // Default installed for known CLIs
+              installed: true, // Assume installed by default to avoid blocking the UI
               checking: false,
               error: 'Unable to check installation status'
             };
@@ -192,11 +186,11 @@ export default function HomePage() {
           setCLIStatus(fallbackStatus);
         }
       } catch (error) {
-        // Error fallback
+        // Error fallback - assume common CLIs are installed
         const errorStatus: { [key: string]: { installed: boolean; checking: boolean; error: string; } } = {};
         assistantOptions.forEach(cli => {
           errorStatus[cli.id] = {
-            installed: cli.id === 'claude' || cli.id === 'cursor' || cli.id === 'codex', // Default installed for known CLIs
+            installed: true, // Assume installed by default to avoid blocking the UI
             checking: false,
             error: 'Network error'
           };
@@ -285,7 +279,7 @@ export default function HomePage() {
 
   async function load() {
     try {
-      const r = await fetchAPI(`${API_BASE}/api/projects`);
+      const r = await fetchAPI('/api/projects');
       if (r.ok) {
         const projectsData = await r.json();
         // Sort by most recent activity (last_message_at or created_at)
@@ -305,7 +299,7 @@ export default function HomePage() {
   
   async function start(projectId: string) {
     try {
-      await fetchAPI(`${API_BASE}/api/projects/${projectId}/preview/start`, { method: 'POST' });
+      await fetchAPI(`/api/projects/${projectId}/preview/start`, { method: 'POST' });
       await load();
     } catch (error) {
       console.error('Failed to start project:', error);
@@ -314,7 +308,7 @@ export default function HomePage() {
   
   async function stop(projectId: string) {
     try {
-      await fetchAPI(`${API_BASE}/api/projects/${projectId}/preview/stop`, { method: 'POST' });
+      await fetchAPI(`/api/projects/${projectId}/preview/stop`, { method: 'POST' });
       await load();
     } catch (error) {
       console.error('Failed to stop project:', error);
@@ -339,7 +333,7 @@ export default function HomePage() {
     
     setIsDeleting(true);
     try {
-      const response = await fetchAPI(`${API_BASE}/api/projects/${deleteModal.project.id}`, { method: 'DELETE' });
+      const response = await fetchAPI(`/api/projects/${deleteModal.project.id}`, { method: 'DELETE' });
       
       if (response.ok) {
         showToast('Project deleted successfully', 'success');
@@ -359,7 +353,7 @@ export default function HomePage() {
 
   async function updateProject(projectId: string, newName: string) {
     try {
-      const response = await fetchAPI(`${API_BASE}/api/projects/${projectId}`, {
+      const response = await fetchAPI(`/api/projects/${projectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName })
@@ -487,7 +481,7 @@ export default function HomePage() {
     
     try {
       // Create a new project first
-      const response = await fetchAPI(`${API_BASE}/api/projects`, {
+      const response = await fetchAPI('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -519,7 +513,7 @@ export default function HomePage() {
             if (!image.file) continue;
             const formData = new FormData();
             formData.append('file', image.file);
-            const uploadResponse = await fetchAPI(`${API_BASE}/api/assets/${project.id}/upload`, { method: 'POST', body: formData });
+            const uploadResponse = await fetchAPI(`/api/assets/${project.id}/upload`, { method: 'POST', body: formData });
             if (uploadResponse.ok) {
               const result = await uploadResponse.json();
               imageData.push({ name: result.filename || image.name, path: result.absolute_path });
@@ -543,24 +537,21 @@ export default function HomePage() {
       const timeoutMs = 60_000; // 60 seconds
       const pollIntervalMs = 800;
       let status: string | null = null;
-      try {
-        while (Date.now() - startTime < timeoutMs) {
-          const stRes = await fetchAPI(`${API_BASE}/api/projects/${project.id}`);
-          if (stRes.ok) {
-            const st = await stRes.json();
-            status = st.status;
-            if (status === 'active') break;
-          }
-          await new Promise((r) => setTimeout(r, pollIntervalMs));
+      while (Date.now() - startTime < timeoutMs) {
+        const stRes = await fetchAPI(`/api/projects/${project.id}`);
+        if (stRes.ok) {
+          const st = await stRes.json();
+          status = st.status;
+          if (status === 'active') break;
         }
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
-      
+
       // Navigate to chat page with model and CLI parameters
       const params = new URLSearchParams();
       if (selectedAssistant) params.set('cli', selectedAssistant);
       if (selectedModel) params.set('model', selectedModel);
       router.push(`/${project.id}/chat${params.toString() ? '?' + params.toString() : ''}`);
-      
     } catch (error) {
       console.error('Failed to create project:', error);
       showToast('Failed to create project', 'error');
@@ -643,7 +634,6 @@ export default function HomePage() {
     // Don't allow selecting uninstalled CLIs
     if (!cliStatus[assistant]?.installed) return;
     
-    console.log('🔧 Assistant changing from', selectedAssistant, 'to', assistant);
     setUsingGlobalDefaults(false);
     setIsInitialLoad(false);
     setSelectedAssistant(assistant);

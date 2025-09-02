@@ -55,15 +55,47 @@ export async function connectVercelProject(projectId: string, name: string): Pro
   }
 }
 
-export async function createDeployment(projectId: string): Promise<{ success: boolean; deployment?: VercelDeployment; message: string }> {
+export async function createDeployment(projectId: string, branch?: string): Promise<{ success: boolean; deployment?: VercelDeployment; message: string }> {
   try {
-    const res = await vFetch('/v13/deployments', { method: 'POST', body: JSON.stringify({}) })
+    const prisma = await getPrisma();
+    
+    // Get GitHub connection data for branch resolution
+    const githubConn = await (prisma as any).projectServiceConnection.findFirst({ 
+      where: { projectId, provider: 'github' } 
+    });
+    
+    const githubData = githubConn?.serviceData ? JSON.parse(githubConn.serviceData) : {};
+    const preferredBranch = branch || 
+      githubData.last_pushed_branch ||
+      githubData.default_branch ||
+      'main';
+
+    console.log(`Creating Vercel deployment for project ${projectId} using branch: ${preferredBranch}`);
+
+    // Build deployment payload with git source
+    const deploymentPayload = {
+      gitSource: {
+        type: 'github',
+        ref: preferredBranch
+      }
+    };
+
+    const res = await vFetch('/v13/deployments', { 
+      method: 'POST', 
+      body: JSON.stringify(deploymentPayload) 
+    });
+    
     if (!res.ok) throw new Error(`Vercel deployment failed: ${res.status}`)
     const data = await res.json()
-    const dep: VercelDeployment = { id: data.id, url: data.url, state: data.state || 'CREATED', createdAt: data.createdAt || Date.now() }
+    const dep: VercelDeployment = { 
+      id: data.id, 
+      url: data.url, 
+      state: data.state || 'CREATED', 
+      createdAt: data.createdAt || Date.now() 
+    }
     // Start monitoring this deployment
     startMonitoring(projectId, dep.id).catch(() => {})
-    return { success: true, deployment: dep, message: 'Deployment created' }
+    return { success: true, deployment: dep, message: `Deployment created from branch: ${preferredBranch}` }
   } catch (e: any) {
     return { success: false, message: e?.message || 'Failed to deploy' }
   }

@@ -151,7 +151,7 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
                               const rawUrl = att.url as string;
                               const fullUrl = rawUrl?.startsWith('http')
                                 ? rawUrl
-                                : `${process.env.NEXT_PUBLIC_API_BASE || ''}${rawUrl || ''}`;
+                                : `${rawUrl || ''}`;
                               const name = att.name || 'image';
                               return (
                                 <div key={idx} className="w-20 h-20 overflow-hidden rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">

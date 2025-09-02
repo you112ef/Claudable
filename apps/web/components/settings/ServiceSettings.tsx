@@ -7,7 +7,6 @@ import GitHubRepoModal from '@/components/GitHubRepoModal';
 import VercelProjectModal from '@/components/VercelProjectModal';
 import SupabaseModal from '@/components/SupabaseModal';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface ServiceConnection {
   id: string;
@@ -111,7 +110,7 @@ export function ServiceSettings({ projectId, onOpenGlobalSettings }: ServiceSett
   // Load service connections from API
   const loadServiceConnections = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/services`);
+      const response = await fetch(`/api/projects/${projectId}/services`);
       if (!response.ok) return;
       
       const connections: ServiceConnection[] = await response.json();
@@ -135,9 +134,9 @@ export function ServiceSettings({ projectId, onOpenGlobalSettings }: ServiceSett
   const checkTokens = async () => {
     try {
       const [githubRes, supabaseRes, vercelRes] = await Promise.all([
-        fetch(`${API_BASE}/api/tokens/github`),
-        fetch(`${API_BASE}/api/tokens/supabase`),
-        fetch(`${API_BASE}/api/tokens/vercel`)
+        fetch(`/api/tokens/github`),
+        fetch(`/api/tokens/supabase`),
+        fetch(`/api/tokens/vercel`)
       ]);
       
       setTokenStatus({
@@ -204,7 +203,7 @@ export function ServiceSettings({ projectId, onOpenGlobalSettings }: ServiceSett
     
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/services/${serviceId}`, {
+      const response = await fetch(`/api/projects/${projectId}/services/${serviceId}`, {
         method: 'DELETE'
       });
       

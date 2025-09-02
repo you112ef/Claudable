@@ -65,8 +65,13 @@ export async function removeGithubConnection(projectId: string) {
   if (row) await (prisma as any).projectServiceConnection.delete({ where: { id: row.id } })
 }
 
-export async function pushToGithub(projectRepoPath: string, branch: string = 'main'): Promise<{ success: boolean; message: string; error?: string }> {
+export async function pushToGithub(projectId: string, projectRepoPath: string, branch?: string): Promise<{ success: boolean; message: string; error?: string; branch?: string }> {
   try {
+    // Get GitHub connection to determine default branch
+    const connection = await getGithubConnection(projectId);
+    const serviceData = connection?.serviceData ? JSON.parse(connection.serviceData) : {};
+    const defaultBranch = branch || serviceData.default_branch || serviceData.last_pushed_branch || 'main';
+    
     // If there are staged/unstaged files but no commit, create one
     if (await hasChanges(projectRepoPath)) {
       await commitAll(projectRepoPath, 'chore: sync before push')
@@ -74,7 +79,7 @@ export async function pushToGithub(projectRepoPath: string, branch: string = 'ma
     // Simple push; assumes remote origin set and auth configured globally
     const { spawn } = await import('node:child_process')
     const res = await new Promise<{ code: number; out: string; err: string }>((resolve) => {
-      const child = spawn('git', ['push', '-u', 'origin', branch], { cwd: projectRepoPath, stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = spawn('git', ['push', '-u', 'origin', defaultBranch], { cwd: projectRepoPath, stdio: ['ignore', 'pipe', 'pipe'] })
       let out = ''
       let err = ''
       child.stdout.on('data', (d) => (out += String(d)))
@@ -82,7 +87,25 @@ export async function pushToGithub(projectRepoPath: string, branch: string = 'ma
       child.on('close', (code) => resolve({ code: code ?? 0, out, err }))
       child.on('error', () => resolve({ code: 1, out: '', err: 'spawn error' }))
     })
-    if (res.code === 0) return { success: true, message: res.out.trim() || 'pushed' }
+    
+    // After successful push, update service data
+    if (res.code === 0 && connection) {
+      try {
+        const updatedData = {
+          ...serviceData,
+          last_push_at: new Date().toISOString(),
+          last_pushed_branch: defaultBranch,
+          default_branch: serviceData.default_branch || defaultBranch
+        };
+        await upsertGithubConnection(projectId, updatedData);
+        console.log(`Updated GitHub service data for project ${projectId}: branch=${defaultBranch}`);
+      } catch (updateError) {
+        console.warn('Failed to update GitHub service data after push:', updateError);
+        // Don't fail the push operation due to service data update failure
+      }
+    }
+    
+    if (res.code === 0) return { success: true, message: res.out.trim() || 'pushed', branch: defaultBranch }
     return { success: false, message: 'push failed', error: res.err.trim() }
   } catch (e: any) {
     return { success: false, message: 'push failed', error: e?.message || String(e) }

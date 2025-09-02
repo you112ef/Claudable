@@ -7,7 +7,6 @@ import ServiceConnectionModal from '@/components/ServiceConnectionModal';
 import { FaCog } from 'react-icons/fa';
 import { useGlobalSettings } from '@/contexts/GlobalSettingsContext';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface GlobalSettingsProps {
   isOpen: boolean;
@@ -163,7 +162,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
     
     for (const provider of providers) {
       try {
-        const response = await fetch(`${API_BASE}/api/tokens/${provider}`);
+        const response = await fetch(`/api/tokens/${provider}`);
         if (response.ok) {
           newTokens[provider] = await response.json();
         } else {
@@ -190,7 +189,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
 
   const loadGlobalSettings = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/settings/global`);
+      const response = await fetch(`/api/settings/global`);
       if (response.ok) {
         const settings = await response.json();
         setGlobalSettings(settings);
@@ -209,7 +208,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
     setCLIStatus(checkingStatus);
     
     try {
-      const response = await fetch(`${API_BASE}/api/settings/cli-status`);
+      const response = await fetch(`/api/settings/cli-status`);
       if (response.ok) {
         const cliStatuses = await response.json();
         setCLIStatus(cliStatuses);
@@ -246,7 +245,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
     setSaveMessage(null);
     
     try {
-      const response = await fetch(`${API_BASE}/api/settings/global`, {
+      const response = await fetch(`/api/settings/global`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(globalSettings)

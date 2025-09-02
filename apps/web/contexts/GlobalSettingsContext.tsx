@@ -30,12 +30,11 @@ export function useGlobalSettings() {
 }
 
 export default function GlobalSettingsProvider({ children }: { children: React.ReactNode }) {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
   const [settings, setSettings] = useState<GlobalAISettings>(defaultSettings);
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/settings/global`);
+      const res = await fetch(`/api/settings/global`);
       if (res.ok) {
         const s = await res.json();
         setSettings(s);
@@ -43,7 +42,7 @@ export default function GlobalSettingsProvider({ children }: { children: React.R
     } catch (e) {
       console.warn('Failed to refresh global settings', e);
     }
-  }, [API_BASE]);
+  }, []);
 
   // Load once on mount
   useEffect(() => {

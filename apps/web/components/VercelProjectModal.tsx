@@ -4,7 +4,6 @@
  */
 import React, { useState, useEffect } from 'react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface VercelProjectModalProps {
   isOpen: boolean;
@@ -46,7 +45,7 @@ export default function VercelProjectModal({
 
     setCheckingAvailability(true);
     try {
-      const response = await fetch(`${API_BASE}/api/vercel/check-project/${encodeURIComponent(name)}`);
+      const response = await fetch(`/api/vercel/check-project/${encodeURIComponent(name)}`);
       
       if (response.ok) {
         setIsAvailable(true);
@@ -95,7 +94,7 @@ export default function VercelProjectModal({
     setError('');
 
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/vercel/connect`, {
+      const response = await fetch(`/api/projects/${projectId}/vercel/connect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

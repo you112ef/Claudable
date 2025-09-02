@@ -4,7 +4,6 @@
  */
 import React, { useState, useEffect } from 'react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface EnvironmentVariable {
   key: string;
@@ -31,7 +30,7 @@ export function EnvironmentSettings({ projectId }: EnvironmentSettingsProps) {
   const loadEnvironmentVariables = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}`);
+      const response = await fetch(`/api/env/${projectId}`);
       if (response.ok) {
         const data = await response.json();
         setVariables(data || []);
@@ -53,7 +52,7 @@ export function EnvironmentSettings({ projectId }: EnvironmentSettingsProps) {
     };
 
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}`, {
+      const response = await fetch(`/api/env/${projectId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -78,7 +77,7 @@ export function EnvironmentSettings({ projectId }: EnvironmentSettingsProps) {
 
   const handleUpdate = async (index: number, variable: EnvironmentVariable) => {
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}/${variable.key}`, {
+      const response = await fetch(`/api/env/${projectId}/${variable.key}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: variable.value })
@@ -99,7 +98,7 @@ export function EnvironmentSettings({ projectId }: EnvironmentSettingsProps) {
     if (!confirm(`Delete environment variable "${key}"?`)) return;
 
     try {
-      const response = await fetch(`${API_BASE}/api/env/${projectId}/${key}`, {
+      const response = await fetch(`/api/env/${projectId}/${key}`, {
         method: 'DELETE'
       });
 

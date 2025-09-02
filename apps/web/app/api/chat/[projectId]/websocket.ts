@@ -6,6 +6,6 @@ export async function GET(req: Request) {
     return new Response('Expected WebSocket', { status: 426 })
   }
   // Intentionally not implementing WS in App Router (Node runtime) here.
-  // The WebSocket server is attached via pages API at /pages/api/chat/[...path].ts
+  // The WebSocket server is attached via Pages API at /pages/api/ws/chat/[projectId].ts
   return new Response('WebSocket not available in current runtime', { status: 501 })
 }

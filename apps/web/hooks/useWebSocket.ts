@@ -58,7 +58,7 @@ export function useWebSocket({
       const defaultProto = isHttps ? 'wss' : 'ws';
       // Use same-origin WebSocket endpoint for App Router server
       const wsBase = (typeof window !== 'undefined' ? `${defaultProto}://${window.location.host}` : 'ws://localhost:3000');
-      const fullUrl = `${wsBase}/api/chat/${projectId}`;
+      const fullUrl = `${wsBase}/api/ws/chat/${projectId}`;
 
       // Best-effort: try to prime WS server, but never abort on failure
       try {
@@ -66,7 +66,7 @@ export function useWebSocket({
         const now = Date.now();
         if (now - lastPrimeAtRef.current > 1500) {
           lastPrimeAtRef.current = now;
-          await fetch(`/api/chat/${projectId}`);
+          await fetch(`/api/ws/chat/${projectId}`);
         }
       } catch (error) {
         // Proceed regardless of priming failure
@@ -153,7 +153,7 @@ export function useWebSocket({
           const delay = Math.min(60000, base + jitter);
 
           // Best-effort prime just before reconnect (throttled above in connect)
-          try { fetch(`/api/chat/${projectId}`).catch(() => {}); } catch {}
+          try { fetch(`/api/ws/chat/${projectId}`).catch(() => {}); } catch {}
 
           reconnectTimeoutRef.current = setTimeout(() => {
             connect().catch(() => {});

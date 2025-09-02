@@ -12,6 +12,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       try {
         const parsed = url.parse(request.url || '', true)
         const parts = (parsed.pathname || '').split('/').filter(Boolean)
+        // Expect path like /api/ws/chat/{projectId}
         const idx = parts.indexOf('chat')
         const projectId = idx >= 0 ? parts[idx + 1] : null
         if (!projectId) { try { (socket as any).close() } catch {}; return }
@@ -40,13 +41,14 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
           }
         }
         socket.on('close', onGone)
-        socket.on('error', (error) => {
+        socket.on('error', () => {
           onGone()
         })
       } catch {}
     })
     anyRes.socket.server.__WSS__ = wss
   }
+  // For GET requests used to "prime" the WS server, simply return OK
   res.status(200).end('ok')
 }
 

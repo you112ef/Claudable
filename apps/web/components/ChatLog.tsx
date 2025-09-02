@@ -32,8 +32,44 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
       .replace(/[🔧⚡🔍📖✏️📁🌐🔎🤖📝🎯✅📓⚙️🧠]/g, '')
       .trim();
     
+    // Check for CLI adapter "Using tool:" pattern first
+    const cliToolMatch = processedContent.match(/^Using tool:\s*(\w+)\s*(.*)$/);
+    if (cliToolMatch) {
+      const toolName = cliToolMatch[1];
+      const toolArg = cliToolMatch[2].trim();
+      
+      switch (toolName) {
+        case 'exec_command':
+          action = 'Executed';
+          filePath = toolArg;
+          cleanContent = `${toolArg}`;
+          break;
+        case 'read':
+        case 'read_file':
+          action = 'Read';
+          filePath = toolArg;
+          cleanContent = undefined;
+          break;
+        case 'write':
+        case 'write_file':
+          action = 'Created';
+          filePath = toolArg;
+          cleanContent = undefined;
+          break;
+        case 'edit':
+          action = 'Edited';
+          filePath = toolArg;
+          cleanContent = undefined;
+          break;
+        default:
+          action = 'Executed';
+          filePath = toolArg;
+          cleanContent = `${toolName} ${toolArg}`;
+      }
+    } 
     // Check for **Tool** pattern with path/command
-    const toolMatch = processedContent.match(/\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|MultiEdit|TodoWrite)\*\*\s*`?([^`\n]+)`?/);
+    else {
+      const toolMatch = processedContent.match(/\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|MultiEdit|TodoWrite)\*\*\s*`?([^`\n]+)`?/);
     if (toolMatch) {
       const toolName = toolMatch[1];
       const toolArg = toolMatch[2].trim();
@@ -83,6 +119,25 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
       
       return { action, filePath, cleanContent, toolName };
     }
+    } // Close the else block
+    
+    // If no pattern matches but metadata has tool info, use that
+    if (metadata?.tool_name) {
+      const toolName = metadata.tool_name;
+      action = toolName === 'Bash' ? 'Executed' : 
+               toolName === 'Read' ? 'Read' :
+               toolName === 'Write' ? 'Created' :
+               toolName === 'Edit' || toolName === 'MultiEdit' ? 'Edited' :
+               'Executed';
+      
+      // Extract file path from content or use a generic label
+      filePath = processedContent.includes(':') 
+                ? processedContent.split(':').slice(1).join(':').trim()
+                : processedContent || `${toolName} operation`;
+      
+      cleanContent = undefined;
+      return { action, filePath, cleanContent, toolName };
+    }
     
     // If no pattern matches, don't treat as tool message
     // Return with no file path to indicate this isn't a tool message
@@ -101,13 +156,12 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
   return <ToolResultItem action={action as "Edited" | "Created" | "Read" | "Deleted" | "Generated" | "Searched" | "Executed"} filePath={filePath} content={cleanContent} />;
 };
 
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
+// Removed unused WS_BASE; useWebSocket hook handles same-origin WS.
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
-  message_type?: 'chat' | 'tool_result' | 'system' | 'error' | 'info';
+  message_type?: 'chat' | 'tool_result' | 'tool_use' | 'system' | 'error' | 'info';
   content: string;
   metadata_json?: any;
   parent_message_id?: string;
@@ -281,12 +335,24 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     // Check if metadata indicates this is a tool message
     if (metadata?.tool_name) return true;
     
-    // Only match actual tool command patterns with ** markers
+    // Check for CLI adapter tool patterns
+    if (metadata?.event_type === 'tool_call') return true;
+    
+    // Check for common tool usage patterns from CLI adapters
+    const toolUsagePatterns = [
+      /^Using tool:/,                    // "Using tool: exec_command ls -la"
+      /^Applying code changes/,          // "Applying code changes"  
+      /^Reading.*file/,                  // Various read patterns
+      /^Writing.*file/,                  // Various write patterns
+    ];
+    
+    // Also match actual tool command patterns with ** markers
     const toolPatterns = [
       /\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|Task|WebFetch|WebSearch|MultiEdit|TodoWrite)\*\*/,
     ];
     
-    return toolPatterns.some(pattern => pattern.test(content));
+    return toolUsagePatterns.some(pattern => pattern.test(content)) || 
+           toolPatterns.some(pattern => pattern.test(content));
   };
 
   useEffect(scrollToBottom, [messages, logs]);
@@ -294,7 +360,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   // Check for active session on component mount
   const checkActiveSession = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
+      const response = await fetch(`/api/chat/${projectId}/active-session`);
       if (response.ok) {
         const sessionData: ActiveSession = await response.json();
         if (sessionData && sessionData.status === 'active' && sessionData.session_id) {
@@ -321,7 +387,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/chat/${projectId}/sessions/${sessionId}/status`);
+        const response = await fetch(`/api/chat/${projectId}/sessions/${sessionId}/status`);
         if (response.ok) {
           const sessionStatus = await response.json();
           
@@ -358,7 +424,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       } else {
         setIsLoading(true);
       }
-      const response = await fetch(`${API_BASE}/api/chat/${projectId}/messages`);
+      const response = await fetch(`/api/chat/${projectId}/messages`);
       if (response.ok) {
         const chatMessages: ChatMessage[] = await response.json();
         setMessages(chatMessages);
@@ -372,6 +438,15 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       }
     }
   };
+
+  // Catch-up: when WS connects, silently refresh history once to fill any gaps
+  useEffect(() => {
+    if (isConnected) {
+      // Silent refresh (force = false) to avoid loading flicker
+      loadChatHistory().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
   // Initial load
   useEffect(() => {
@@ -426,7 +501,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         }
         // If already polling a known session, skip
         if (pollIntervalRef.current) return;
-        const res = await fetch(`${API_BASE}/api/chat/${projectId}/active-session`);
+        const res = await fetch(`/api/chat/${projectId}/active-session`);
         if (res.ok) {
           const data: ActiveSession = await res.json();
           if (data && data.status === 'active' && data.session_id) {
@@ -642,6 +717,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     // Handle different message types
     switch (message_type) {
       case 'tool_result':
+      case 'tool_use':
         return {
           bgClass: 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800',
           textColor: 'text-blue-900 dark:text-blue-100',
@@ -953,7 +1029,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
                                   return (
                                     <div className="mt-2 flex flex-wrap gap-2">
                                       {attachments.map((attachment: any, idx: number) => {
-                                        const imageUrl = `${API_BASE}${attachment.url}`;
+                                        const imageUrl = `${attachment.url}`;
                                         return (
                                         <div key={idx} className="relative group">
                                           <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">

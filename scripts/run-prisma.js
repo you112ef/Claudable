@@ -64,11 +64,23 @@ switch (cmd) {
     runPrisma(['generate', '--schema', 'packages/db/prisma/schema.prisma'])
     break
   case 'migrate': {
-    const isInteractive = process.stdout.isTTY && process.env.CI !== 'true'
-    const args = isInteractive
-      ? ['migrate', 'dev', '--schema', 'packages/db/prisma/schema.prisma']
-      : ['db', 'push', '--schema', 'packages/db/prisma/schema.prisma']
-    runPrisma(args, { backup: true })
+    // Prefer non-interactive db push by default to avoid prompts on fresh installs.
+    // Opt into migrations with PRISMA_USE_MIGRATIONS=true or when migrations already exist.
+    const root = path.join(__dirname, '..')
+    const migrationsDir = path.join(root, 'packages', 'db', 'prisma', 'migrations')
+    const hasMigrations = fs.existsSync(migrationsDir) && (fs.readdirSync(migrationsDir).filter((f) => !f.startsWith('.')).length > 0)
+    const useMigrations = process.env.PRISMA_USE_MIGRATIONS === 'true' || hasMigrations
+
+    if (useMigrations) {
+      const migrateArgs = ['migrate', 'dev', '--schema', 'packages/db/prisma/schema.prisma']
+      if (!hasMigrations) {
+        // First migration: provide a default name to avoid interactive prompt
+        migrateArgs.push('--name', process.env.PRISMA_MIGRATION_NAME || 'init')
+      }
+      runPrisma(migrateArgs, { backup: true })
+    } else {
+      runPrisma(['db', 'push', '--schema', 'packages/db/prisma/schema.prisma'], { backup: true })
+    }
     break
   }
   case 'push':

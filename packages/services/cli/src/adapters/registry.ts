@@ -170,34 +170,77 @@ class CodexAdapter implements CLIAdapter {
         return
       }
       if (type === 'patch_apply_begin') {
-        // Try to extract file paths from the patch payload; fall back to generic text
+        // Prefer structured changes if present (Codex proto emits msg.changes)
         const files: string[] = []
+        let content: string | undefined
         try {
-          const candidates: string[] = []
-          const txt = (msg?.patch?.text || msg?.patch_text || msg?.patch || '') as string
-          if (typeof txt === 'string' && txt) candidates.push(txt)
-          const diff = (msg?.patch?.diff || msg?.diff || '') as string
-          if (typeof diff === 'string' && diff) candidates.push(diff)
-          const arr = Array.isArray(msg?.files) ? msg.files : []
-          for (const f of arr) if (typeof f === 'string') files.push(f)
-          for (const s of candidates) {
-            const lines = String(s).split(/\r?\n/)
-            for (const ln of lines) {
-              const m1 = ln.match(/^\*\*\*\s+(?:Update|Add|Delete) File:\s+(.+)$/)
-              if (m1 && m1[1]) files.push(m1[1].trim())
-              const m2 = ln.match(/^diff --git a\/(.+?) b\//)
-              if (m2 && m2[1]) files.push(m2[1].trim())
+          const changes = msg?.changes
+          if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
+            const entries = Object.entries(changes as Record<string, any>)
+            if (entries.length > 0) {
+              // Build a concise summary similar to Python adapter
+              const [firstPath, firstChange] = entries[0]
+              const baseName = String(firstPath).split('/').pop() || String(firstPath)
+              files.push(firstPath)
+              const mkSingle = (p: string, ch: any) => {
+                const name = p.split('/').pop() || p
+                if (ch && typeof ch === 'object') {
+                  if ('add' in ch) return `**Write** \`${name}\``
+                  if ('delete' in ch) return `**Delete** \`${name}\``
+                  if ('update' in ch) {
+                    const upd = ch.update || {}
+                    const movePath = upd.move_path || upd.movePath
+                    if (typeof movePath === 'string' && movePath) {
+                      const newName = String(movePath).split('/').pop() || String(movePath)
+                      return `**Rename** \`${name}\` → \`${newName}\``
+                    }
+                    return `**Edit** \`${name}\``
+                  }
+                }
+                return `**Edit** \`${name}\``
+              }
+              if (entries.length === 1) {
+                content = mkSingle(firstPath, firstChange)
+              } else {
+                const parts: string[] = []
+                for (const [p, ch] of entries.slice(0, 3)) {
+                  parts.push('• ' + mkSingle(p, ch).replace(/^\*\*/,'**'))
+                  files.push(p)
+                }
+                if (entries.length > 3) parts.push(`• ... +${entries.length - 3} more files`)
+                content = parts.join('\n')
+              }
             }
           }
         } catch {}
-        let content: string
-        if (files.length > 0) {
-          const unique = Array.from(new Set(files))
-          const first = unique[0]
-          content = `**Edit** \`${first}\``
-        } else {
-          content = `**Edit** \`code changes\``
+
+        // Fallback: try to extract from textual patches or msg.files
+        if (!content) {
+          try {
+            const candidates: string[] = []
+            const txt = (msg?.patch?.text || msg?.patch_text || msg?.patch || '') as string
+            if (typeof txt === 'string' && txt) candidates.push(txt)
+            const diff = (msg?.patch?.diff || msg?.diff || '') as string
+            if (typeof diff === 'string' && diff) candidates.push(diff)
+            const arr = Array.isArray(msg?.files) ? msg.files : []
+            for (const f of arr) if (typeof f === 'string') files.push(f)
+            for (const s of candidates) {
+              const lines = String(s).split(/\r?\n/)
+              for (const ln of lines) {
+                const m1 = ln.match(/^\*\*\*\s+(?:Update|Add|Delete) File:\s+(.+)$/)
+                if (m1 && m1[1]) files.push(m1[1].trim())
+                const m2 = ln.match(/^diff --git a\/(.+?) b\//)
+                if (m2 && m2[1]) files.push(m2[1].trim())
+              }
+            }
+          } catch {}
+          if (files.length > 0) {
+            const unique = Array.from(new Set(files))
+            const first = unique[0]
+            content = `**Edit** \`${first}\``
+          }
         }
+        if (!content) content = `**Edit** \`code changes\``
         console.log(`🔧 ${content}`)
         yield { kind: 'message', content, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex', event_type: 'tool_call', original_event: msg, files: files.slice(0, 10) } }
         return

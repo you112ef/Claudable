@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useRef, ReactElement, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { Brain } from 'lucide-react';
 import ToolResultItem from './ToolResultItem';
@@ -245,7 +246,6 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   const [isLoading, setIsLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const activeCheckRef = useRef<NodeJS.Timeout | null>(null);
   // Track whether current WS connection has actually delivered at least one message
@@ -473,11 +473,6 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     }
   });
 
-  const scrollToBottom = () => {
-    const behavior: ScrollBehavior = isWaitingForResponse ? 'auto' : 'smooth'
-    logsEndRef.current?.scrollIntoView({ behavior });
-  };
-
   // Function to detect tool usage messages based on patterns
   const isToolUsageMessage = (content: string, metadata?: any) => {
     if (!content) return false;
@@ -508,7 +503,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
            toolPatterns.some(pattern => pattern.test(content));
   };
 
-  useEffect(scrollToBottom, [messages, logs]);
+  // react-scroll-to-bottom handles following behavior; no manual scroll effect needed
 
   // Check for active session on component mount
   const checkActiveSession = async () => {
@@ -1146,31 +1141,32 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     );
   };
 
-  return (
-    <div className="flex flex-col h-full bg-white dark:bg-black">
-      {/* 메시지와 로그를 함께 표시 */}
-      <div className="flex-1 overflow-y-auto px-8 py-3 space-y-2 custom-scrollbar dark:chat-scrollbar">
-        {isLoading && !historyLoadedOnceRef.current && (
-          <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
-            <div className="flex flex-col items-center">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>
-              <p>Loading chat history...</p>
-            </div>
+  const listItems = useMemo(() => {
+    const items: React.ReactElement[] = [];
+    if (isLoading && !historyLoadedOnceRef.current) {
+      items.push(
+        <div key="loading" className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+          <div className="flex flex-col items-center">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>
+            <p>Loading chat history...</p>
           </div>
-        )}
-        
-        {!isLoading && messages.length === 0 && logs.length === 0 && (
-          <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
-            <div className="text-center">
-              <div className="text-2xl mb-2">💬</div>
-              <p>Start a conversation with your agent</p>
-            </div>
+        </div>
+      );
+      return items;
+    }
+    if (!isLoading && displayableMessages.length === 0 && logs.length === 0) {
+      items.push(
+        <div key="empty" className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+          <div className="text-center">
+            <div className="text-2xl mb-2">💬</div>
+            <p>Start a conversation with your agent</p>
           </div>
-        )}
-        
-        <AnimatePresence>
-          {/* Render chat messages with optimized animation */}
-          {displayableMessages.map((message, index) => {
+        </div>
+      );
+    }
+
+    items.push(
+      ...displayableMessages.map((message, index) => {
             const isNewMessage = message.id === lastMessageId;
             
             const messageContent = (
@@ -1320,10 +1316,11 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
                 )}
               </div>
             );
-          })}
-          
-          {/* Render filtered agent logs as plain text */}
-          {logs.filter(log => {
+          })
+    );
+
+    items.push(
+      ...logs.filter(log => {
             // Hide internal system logs but show tool results for transparency
             const hideTypes = ['system'];
             return !hideTypes.includes(log.type);
@@ -1339,25 +1336,251 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
                 </div>
               </motion.div>
             </div>
-          ))}
-        </AnimatePresence>
-        
-        {/* Loading indicator for waiting response */}
-        {isWaitingForResponse && (
-          <div className="mb-4 w-full">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-            >
-              <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
-                <span className="animate-pulse">...</span>
+          ))
+    );
+
+    if (isWaitingForResponse) {
+      items.push(
+        <div key="waiting" className="mb-4 w-full">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
+              <span className="animate-pulse">...</span>
+            </div>
+          </motion.div>
+        </div>
+      );
+    }
+
+    return items;
+  }, [isLoading, displayableMessages, logs, isWaitingForResponse, lastMessageId]);
+
+  // Stable virtual items to avoid re-mount flicker
+  type VirtualItem =
+    | { kind: 'loading'; key: 'loading' }
+    | { kind: 'empty'; key: 'empty' }
+    | { kind: 'waiting'; key: 'waiting' }
+    | { kind: 'message'; key: string; message: ChatMessage }
+    | { kind: 'log'; key: string; log: LogEntry };
+
+  const virtualItems: VirtualItem[] = useMemo(() => {
+    const items: VirtualItem[] = [];
+    if (isLoading && !historyLoadedOnceRef.current) {
+      items.push({ kind: 'loading', key: 'loading' });
+      return items;
+    }
+    if (!isLoading && displayableMessages.length === 0 && logs.length === 0) {
+      items.push({ kind: 'empty', key: 'empty' });
+    }
+    for (const m of displayableMessages) items.push({ kind: 'message', key: `m:${m.id}`, message: m });
+    for (const l of logs.filter(l => !['system'].includes(l.type))) items.push({ kind: 'log', key: `l:${l.id}`, log: l });
+    if (isWaitingForResponse) items.push({ kind: 'waiting', key: 'waiting' });
+    return items;
+  }, [isLoading, displayableMessages, logs, isWaitingForResponse]);
+
+  // Auto-scroll state and controls
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [pendingNew, setPendingNew] = useState(0);
+
+  const scrollToBottomSmooth = useCallback(() => {
+    const count = virtualItems.length;
+    if (count > 0) {
+      virtuosoRef.current?.scrollToIndex({ index: count - 1, behavior: 'smooth' });
+      setPendingNew(0);
+    }
+  }, [virtualItems.length]);
+
+  // When list grows: if at bottom, follow; if scrolled up, increase pending count
+  const prevLengthRef = useRef(virtualItems.length);
+  useEffect(() => {
+    const prev = prevLengthRef.current;
+    const curr = virtualItems.length;
+    if (curr > prev) {
+      // New items appended
+      if (isAtBottom) {
+        // Smooth scroll to bottom
+        scrollToBottomSmooth();
+      } else {
+        setPendingNew((n) => n + (curr - prev));
+      }
+    }
+    prevLengthRef.current = curr;
+  }, [virtualItems.length, isAtBottom, scrollToBottomSmooth]);
+
+  // If the last message is a user message, force scroll to bottom
+  useEffect(() => {
+    if (displayableMessages.length === 0) return;
+    const last = displayableMessages[displayableMessages.length - 1];
+    if (last.role === 'user') {
+      scrollToBottomSmooth();
+    }
+  }, [displayableMessages, scrollToBottomSmooth]);
+
+  return (
+    <div className="flex flex-col h-full bg-white dark:bg-black">
+      {/* 메시지와 로그를 함께 표시 */}
+      <div className="flex-1 min-h-0 relative">
+        <Virtuoso
+          ref={virtuosoRef}
+          className="h-full custom-scrollbar dark:chat-scrollbar"
+          data={virtualItems}
+          itemContent={(index, item) => {
+            if (item.kind === 'loading') {
+              return (
+                <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+                  <div className="flex flex-col items-center">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>
+                    <p>Loading chat history...</p>
+                  </div>
+                </div>
+              );
+            }
+            if (item.kind === 'empty') {
+              return (
+                <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+                  <div className="text-center">
+                    <div className="text-2xl mb-2">💬</div>
+                    <p>Start a conversation with your agent</p>
+                  </div>
+                </div>
+              );
+            }
+            if (item.kind === 'waiting') {
+              return (
+                <div className="mb-4 w-full">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                    <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
+                      <span className="animate-pulse">...</span>
+                    </div>
+                  </motion.div>
+                </div>
+              );
+            }
+            if (item.kind === 'log') {
+              const log = item.log;
+              return (
+                <div className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                    <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
+                      {renderLogEntry(log)}
+                    </div>
+                  </motion.div>
+                </div>
+              );
+            }
+            // message
+            const message = item.message;
+            const isNewMessage = message.id === lastMessageId;
+            const messageContent = (
+              <>
+                {message.role === 'user' ? (
+                  <div className="flex justify-end">
+                    <div className="max-w-[80%] bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-3">
+                      <div className="text-sm text-gray-900 dark:text-white break-words">
+                        {(() => {
+                          const cleanedMessage = cleanUserMessage(message.content);
+                          const imagePattern = /Image #\d+ path: ([^\n]+)/g;
+                          const imagePaths: string[] = [];
+                          let match;
+                          while ((match = imagePattern.exec(cleanedMessage)) !== null) { imagePaths.push(match[1]); }
+                          const messageWithoutPaths = cleanedMessage.replace(/\n*Image #\d+ path: [^\n]+/g, '').trim();
+                          return (
+                            <>
+                              {messageWithoutPaths && (<div>{shortenPath(messageWithoutPaths)}</div>)}
+                              {(() => {
+                                const attachments = message.metadata_json?.attachments || [];
+                                if (attachments.length > 0) {
+                                  return (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {attachments.map((attachment: any, idx: number) => {
+                                        const imageUrl = `${attachment.url}`;
+                                        return (
+                                          <div key={idx} className="relative group">
+                                            <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
+                                              <img src={imageUrl} alt={`Image ${idx + 1}`} className="w-full h-full object-cover" />
+                                            </div>
+                                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity flex items-center justify-center">
+                                              <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-60 px-2 py-1 rounded">#{idx + 1}</span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                } else if (imagePaths.length > 0) {
+                                  return (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {imagePaths.map((path, idx) => (
+                                        <div key={idx} className="relative group">
+                                          <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                                            <svg className="w-16 h-16 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                            </svg>
+                                          </div>
+                                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity flex items-center justify-center">
+                                            <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-60 px-2 py-1 rounded">#{idx + 1}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full">
+                    {isToolUsageMessage(message.content, message.metadata_json) ? (
+                      <ToolMessage content={message.content} metadata={message.metadata_json} />
+                    ) : (
+                      <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
+                        {renderContentWithThinking(shortenPath(message.content))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+            return (
+              <div className="mb-4">
+                <div>{messageContent}</div>
               </div>
-            </motion.div>
-          </div>
+            );
+          }}
+          followOutput="auto"
+          atBottomStateChange={(bottom) => {
+            setIsAtBottom(bottom);
+            if (bottom) setPendingNew(0);
+          }}
+          computeItemKey={(index, item) => (item as any).key}
+          components={{
+            List: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+              (props, ref) => (
+                <div ref={ref} {...props} className={`px-8 py-3 space-y-2 ${props.className || ''}`} />
+              )
+            )
+          }}
+        />
+
+        {/* New messages indicator when scrolled up */}
+        {pendingNew > 0 && !isAtBottom && (
+          <button
+            onClick={scrollToBottomSmooth}
+            className="absolute bottom-4 right-4 z-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 shadow-md"
+            title="Scroll to newest"
+          >
+            {pendingNew} new message{pendingNew > 1 ? 's' : ''}
+          </button>
         )}
-        
-        <div ref={logsEndRef} />
       </div>
 
       {/* 상세 모달 */}

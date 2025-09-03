@@ -8,6 +8,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const anyRes = res as any
   if (!anyRes.socket.server.__WSS__) {
     const wss = new WebSocketServer({ server: anyRes.socket.server })
+
+    // Prevent uncaught exceptions from bubbling due to protocol errors
+    wss.on('error', (err) => {
+      try { console.error('[WS(api)] Server error:', err) } catch {}
+    })
+
     wss.on('connection', (socket, request) => {
       try {
         const parsed = url.parse(request.url || '', true)
@@ -15,7 +21,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         // Expect path like /api/ws/chat/{projectId}
         const idx = parts.indexOf('chat')
         const projectId = idx >= 0 ? parts[idx + 1] : null
-        if (!projectId) { try { (socket as any).close() } catch {}; return }
+        if (!projectId) { try { (socket as any).close(1002, 'Protocol error') } catch {}; return }
         
         wsRegistry.add(projectId, socket as any)
         try { (wsRegistry as any).flushPending(projectId) } catch {}
@@ -41,8 +47,15 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
             }
           }
         }
-        socket.on('close', onGone)
-        socket.on('error', () => {
+        socket.on('close', (code: number, reason: Buffer) => {
+          try {
+            const msg = reason ? reason.toString('utf8') : ''
+            console.log(`[WS(api)] Closed: code=${code} reason=${msg}`)
+          } catch {}
+          onGone()
+        })
+        socket.on('error', (err) => {
+          try { console.error('[WS(api)] Socket error:', err) } catch {}
           onGone()
         })
       } catch {}

@@ -16,6 +16,13 @@ function ensureServer() {
     res.end('WS server running')
   })
   const wss = new WebSocketServer({ server })
+  // Surface server-level errors to avoid process crash
+  wss.on('error', (err) => {
+    try {
+      console.error('[WS] Server error:', err)
+    } catch {}
+  })
+
   wss.on('connection', (socket, req) => {
     try {
       const parsed = url.parse(req.url || '', true)
@@ -23,7 +30,8 @@ function ensureServer() {
       // Expect path like /api/chat/{projectId}
       const projectId = parts[2]
       if (!projectId) {
-        socket.close()
+        // Use a valid close code for protocol error
+        try { socket.close(1002, 'Protocol error') } catch {}
         return
       }
       wsRegistry.add(projectId, socket as any)
@@ -36,8 +44,17 @@ function ensureServer() {
           }
         } catch {}
       })
-      socket.on('close', () => wsRegistry.remove(projectId, socket as any))
-      socket.on('error', () => wsRegistry.remove(projectId, socket as any))
+      socket.on('close', (code: number, reason: Buffer) => {
+        try {
+          const msg = reason ? reason.toString('utf8') : ''
+          console.log(`[WS] Closed: code=${code} reason=${msg}`)
+        } catch {}
+        wsRegistry.remove(projectId, socket as any)
+      })
+      socket.on('error', (err) => {
+        try { console.error('[WS] Socket error:', err) } catch {}
+        wsRegistry.remove(projectId, socket as any)
+      })
     } catch {
       try { (socket as any).close() } catch {}
     }

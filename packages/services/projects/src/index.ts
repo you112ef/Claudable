@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getPrisma } from '@repo/db'
-import { wsRegistry } from '@repo/ws'
+import { publish } from '@repo/ws'
 import { projectsRoot, resolveProjectRepoPath, resolveProjectAssetsPath, projectRoot } from '@repo/config'
 
 export const ProjectIdSchema = z.string().regex(/^[a-z0-9-]{3,}$/)
@@ -189,7 +189,7 @@ export async function cleanupProjectFiles(projectId: string): Promise<void> {
 
 export async function initializeProjectBackground(projectId: string, projectName: string): Promise<void> {
   try {
-    try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'initializing', message: 'Setting up project' } } as any) } catch {}
+    try { publish(projectId, { type: 'project_status', data: { status: 'initializing', message: 'Setting up project' } } as any) } catch {}
     // Create directories
     const repo = resolveProjectRepoPath(projectId)
     const assets = resolveProjectAssetsPath(projectId)
@@ -204,11 +204,11 @@ export async function initializeProjectBackground(projectId: string, projectName
     // Update DB status to active and set repo_path
     const prisma = await getPrisma()
     await (prisma as any).project.update({ where: { id: projectId }, data: { status: 'active', repoPath: repo } })
-    try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'active', message: 'Project is ready' } } as any) } catch {}
+    try { publish(projectId, { type: 'project_status', data: { status: 'active', message: 'Project is ready' } } as any) } catch {}
   } catch (e) {
     const prisma = await getPrisma()
     await (prisma as any).project.update({ where: { id: projectId }, data: { status: 'failed' } }).catch(() => {})
-    try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'failed', message: 'Project setup failed' } } as any) } catch {}
+    try { publish(projectId, { type: 'project_status', data: { status: 'failed', message: 'Project setup failed' } } as any) } catch {}
   }
 }
 

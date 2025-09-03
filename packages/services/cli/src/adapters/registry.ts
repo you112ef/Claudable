@@ -165,12 +165,41 @@ class CodexAdapter implements CLIAdapter {
         const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command || '')
         const toolSummary = `**Bash** \`${cmd}\``
         console.log(`🔧 ${toolSummary}`)
-        yield { kind: 'message', content: `Using tool: exec_command ${cmd}`, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Bash', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
+        // Emit in markdown tool form so UI can render cleanly as Executed + command (no exec_command prefix)
+        yield { kind: 'message', content: toolSummary, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Bash', cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
         return
       }
       if (type === 'patch_apply_begin') {
-        console.log(`🔧 **Edit** \`code changes\``)
-        yield { kind: 'message', content: 'Applying code changes', role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex', event_type: 'tool_call', original_event: msg } }
+        // Try to extract file paths from the patch payload; fall back to generic text
+        const files: string[] = []
+        try {
+          const candidates: string[] = []
+          const txt = (msg?.patch?.text || msg?.patch_text || msg?.patch || '') as string
+          if (typeof txt === 'string' && txt) candidates.push(txt)
+          const diff = (msg?.patch?.diff || msg?.diff || '') as string
+          if (typeof diff === 'string' && diff) candidates.push(diff)
+          const arr = Array.isArray(msg?.files) ? msg.files : []
+          for (const f of arr) if (typeof f === 'string') files.push(f)
+          for (const s of candidates) {
+            const lines = String(s).split(/\r?\n/)
+            for (const ln of lines) {
+              const m1 = ln.match(/^\*\*\*\s+(?:Update|Add|Delete) File:\s+(.+)$/)
+              if (m1 && m1[1]) files.push(m1[1].trim())
+              const m2 = ln.match(/^diff --git a\/(.+?) b\//)
+              if (m2 && m2[1]) files.push(m2[1].trim())
+            }
+          }
+        } catch {}
+        let content: string
+        if (files.length > 0) {
+          const unique = Array.from(new Set(files))
+          const first = unique[0]
+          content = `**Edit** \`${first}\``
+        } else {
+          content = `**Edit** \`code changes\``
+        }
+        console.log(`🔧 ${content}`)
+        yield { kind: 'message', content, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: 'Edit', changes_made: true, cli_type: 'codex', event_type: 'tool_call', original_event: msg, files: files.slice(0, 10) } }
         return
       }
       if (type === 'web_search_begin') {
@@ -253,7 +282,7 @@ class CursorAdapter implements CLIAdapter {
     const child = spawn('cursor-agent', args, { cwd: repoCwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } })
     const decoder = new TextDecoder()
     let buffer = ''
-    let assistantBuffer = ''
+    let assistantBuffer = '' // not used for aggregation; kept for possible future use
 
     const onJson = async function* (evt: any): AsyncGenerator<AdapterEvent> {
       const type = evt?.type
@@ -263,10 +292,18 @@ class CursorAdapter implements CLIAdapter {
       }
       if (type === 'user') return
       if (type === 'assistant') {
+        // Opportunistically persist session id if provided in assistant envelopes
+        try {
+          const sid = (evt?.session_id || evt?.sessionId || evt?.message?.sessionId || evt?.message?.session_id) as string | undefined
+          if (sid) { await setCursorSessionId(projectId, sid) }
+        } catch {}
         const contentArr = evt.message?.content || []
         let text = ''
         for (const part of contentArr) if (part?.type === 'text') text += part.text || ''
-        if (text) yield { kind: 'message', content: text, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'cursor', event_type: 'assistant', original_event: evt } }
+        if (text) {
+          const cleaned = text.replace(/\r?\n$/, '')
+          yield { kind: 'message', content: cleaned, role: 'assistant', messageType: 'chat', metadata: { cli_type: 'cursor', event_type: 'assistant', original_event: evt } }
+        }
         return
       }
       if (type === 'tool_call') {
@@ -279,7 +316,7 @@ class CursorAdapter implements CLIAdapter {
           const args = toolCall[rawName]?.args || {}
           const summary = summarizeTool(toolName, args)
           console.log(`🔧 ${summary}`)
-          yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, cli_type: 'cursor', event_type: 'tool_call', original_event: evt } }
+          yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { tool_name: toolName, tool_input: args, cli_type: 'cursor', event_type: 'tool_call', original_event: evt } }
           return
         }
         if (subtype === 'completed') {
@@ -290,6 +327,11 @@ class CursorAdapter implements CLIAdapter {
         }
       }
       if (type === 'result') {
+        // Try to persist session id like FastAPI implementation
+        const sid = (evt?.session_id || evt?.sessionId || evt?.chatId || evt?.chat_id || evt?.threadId || evt?.thread_id || evt?.message?.sessionId || evt?.message?.session_id) as string | undefined
+        if (sid) {
+          try { await setCursorSessionId(projectId, sid) } catch {}
+        }
         const isError = !!evt.is_error || evt.subtype === 'error'
         yield { kind: 'result', success: !isError, error: isError ? 'error' : undefined }
         // Also produce hidden system message
@@ -313,6 +355,7 @@ class CursorAdapter implements CLIAdapter {
           try { const evt = JSON.parse(t); yield* onJson(evt) } catch { /* ignore */ }
         }
       }
+      // No aggregation flush; we streamed each chunk already
       const code = child.exitCode
       if (code !== 0) yield { kind: 'result', success: false, error: `cursor-agent exited with ${code}` }
     })()
@@ -376,16 +419,68 @@ class QwenAdapter implements CLIAdapter {
       if (sessionId) await setQwenSessionId(projectId, sessionId)
     }
     if (!sessionId) { yield { kind: 'result', success: false, error: 'Qwen session failed' }; return }
-    // Notification stream
+    // Notification stream with debug logging
     const q: any[] = []
-    client.onNotification('session/update', (params) => { if (params?.sessionId === sessionId) q.push(params.update || {}) })
+    client.onNotification('session/update', (params) => { 
+      if (params?.sessionId === sessionId) {
+        const update = params.update || {}
+        console.log(`🔔 [QwenAdapter] Notification received:`, {
+          sessionId: params.sessionId,
+          updateType: update.sessionUpdate || update.type,
+          hasContent: !!(update.content?.text || update.text),
+          contentLength: (update.content?.text || update.text || '').length,
+          queueLength: q.length
+        })
+        q.push(update)
+      } else {
+        console.log(`🔔 [QwenAdapter] Notification ignored - wrong session:`, {
+          expected: sessionId,
+          received: params?.sessionId
+        })
+      }
+    })
     // Build prompt (Qwen: ignore images)
     const parts: any[] = []
     if (opts.instruction) parts.push({ type: 'text', text: opts.instruction })
-    // Send prompt
-    await client.request('session/prompt', { sessionId, prompt: parts })
+    console.log(`📤 [QwenAdapter] Sending prompt:`, {
+      sessionId,
+      partsCount: parts.length,
+      instructionLength: opts.instruction?.length || 0
+    })
+    // Send prompt in parallel with queue processing (Python FastAPI style)
+    console.log(`⚡ [QwenAdapter] Starting session/prompt request...`)
+    
+    const createPromptTask = () => {
+      return client.request('session/prompt', { sessionId, prompt: parts })
+        .then(() => {
+          console.log(`✅ [QwenAdapter] session/prompt request completed`)
+          return { completed: true }
+        })
+        .catch(async (e: any) => {
+          const msg = e?.message ? String(e.message) : String(e)
+          if (/session not found/i.test(msg)) {
+            try {
+              const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] })
+              sessionId = res?.sessionId || null
+              if (sessionId) { try { await setQwenSessionId(projectId, sessionId) } catch {} }
+              await client.request('session/prompt', { sessionId, prompt: parts })
+              console.log(`✅ [QwenAdapter] session/prompt recovered and completed`)
+              return { completed: true }
+            } catch (e2: any) {
+              return { error: `Qwen session recovery failed: ${e2?.message || e2}` }
+            }
+          } else {
+            return { error: `Qwen prompt error: ${msg}` }
+          }
+        })
+    }
+    
+    let promptTask = createPromptTask()
+    let promptCompleted = false
     let thought: string[] = []
     let text: string[] = []
+    // Incremental flush throttle for realtime streaming
+    let lastFlushAt = Date.now()
     function compose() {
       const segments: string[] = []
       if (thought.length) segments.push(`<thinking>${thought.join('')}</thinking>`)
@@ -399,46 +494,155 @@ class QwenAdapter implements CLIAdapter {
       return combined
     }
     const start = Date.now()
-    const MAX_IDLE_TIME = 30000 // 30 seconds without updates = timeout
-    let lastUpdateTime = Date.now()
+    const MAX_IDLE_TIME = 3000 // 3 seconds without updates = timeout
     
-    // Drain updates with timeout-based approach instead of fixed loop count
-    while (true) {
-      const upd = q.shift()
-      if (!upd) { 
-        // Check for timeout
-        if (Date.now() - lastUpdateTime > MAX_IDLE_TIME) {
-          console.log('[QwenAdapter] No updates for 30s, assuming completion')
-          break
+    // Python-style concurrent processing: prompt + queue processing
+    const createUpdatePromise = () => {
+      return new Promise<{ type: 'update', data: any }>((resolve) => {
+        const checkQueue = () => {
+          if (q.length > 0) {
+            const update = q.shift()
+            console.log(`⚡ [QwenAdapter] Processing queued update:`, {
+              type: update.sessionUpdate || update.type,
+              queueLength: q.length
+            })
+            resolve({ type: 'update', data: update })
+          } else {
+            setTimeout(checkQueue, 10) // Check every 10ms instead of 100ms
+          }
         }
-        await new Promise((r) => setTimeout(r, 100)); 
-        continue 
+        checkQueue()
+      })
+    }
+    
+    const createTimeoutPromise = () => {
+      return new Promise<{ type: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ type: 'timeout' }), MAX_IDLE_TIME)
+      })
+    }
+    
+    // Start concurrent processing immediately (like Python asyncio.wait)
+    while (true) {
+      const promises: Promise<any>[] = []
+      
+      // Only include promptTask if not completed yet
+      if (!promptCompleted) {
+        promises.push(promptTask.then(r => ({ type: 'prompt', result: r })))
       }
-      lastUpdateTime = Date.now() // Reset timeout on new update
+      promises.push(createUpdatePromise()) // Create fresh Promise each time
+      promises.push(createTimeoutPromise()) // Create fresh Promise each time
+      
+      const result = await Promise.race(promises)
+      
+      if (result.type === 'prompt') {
+        // Prompt completed - check for errors
+        promptCompleted = true
+        const promptResult = (result as any).result
+        if (promptResult.error) {
+          yield { kind: 'message', content: promptResult.error, role: 'assistant', messageType: 'error', metadata: { cli_type: 'qwen' } }
+          yield { kind: 'result', success: false, error: promptResult.error }
+          return
+        }
+        // Continue processing remaining queue items until timeout
+        console.log('[QwenAdapter] Prompt completed, draining remaining updates...')
+        continue
+      } else if (result.type === 'timeout') {
+        console.log('[QwenAdapter] No updates for 3s, assuming completion')
+        break
+      }
+      
+      // Process update
+      const upd = (result as any).data
       const kind = upd.sessionUpdate || upd.type
       if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
         const t = (upd.content?.text ?? upd.text ?? '') as string
+        console.log(`📝 [QwenAdapter] ${kind}:`, {
+          textLength: t.length,
+          text: t.substring(0, 50) + (t.length > 50 ? '...' : ''),
+          thoughtBufferLen: thought.join('').length,
+          textBufferLen: text.join('').length
+        })
+        if (!t) { continue }
         if (kind === 'agent_thought_chunk') thought.push(t); else text.push(t)
+        // Periodic flush to enable realtime UI updates
+        const now = Date.now()
+        const bufferedLen = (thought.join('').length + text.join('').length)
+        if ((now - lastFlushAt) > 200 || t.includes('\n') || bufferedLen > 400) {
+          const msg = compose()
+          if (msg) {
+            console.log(`🚀 [QwenAdapter] Yielding message:`, {
+              contentLength: msg.length,
+              timeSinceLastFlush: now - lastFlushAt
+            })
+            yield { kind: 'message', content: msg.replace(/\r?\n$/, ''), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }
+            thought.length = 0; text.length = 0
+            lastFlushAt = now
+          }
+        }
         continue
       }
       if (kind === 'tool_call' || kind === 'tool_call_update') {
-        // Process both tool_call and tool_call_update events for better visibility
-        let shouldYield = true
+        // For Qwen parity: ignore noisy updates entirely
         if (kind === 'tool_call_update') {
-          // For update events, only yield if there's meaningful new information
-          const toolName = upd?.invocation?.tool
-          const args = upd?.invocation?.args
-          shouldYield = !!(toolName && args && Object.keys(args).length > 0)
+          continue
         }
-        
-        if (shouldYield) {
-          if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }; thought = []; text = [] }
-          const toolName = (upd?.invocation?.tool || '') as string
-          const input = upd?.invocation?.args || {}
-          const summary = summarizeTool(toolName, input)
-          console.log(`🔧 ${summary}`)
-          yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd, update_type: kind } }
+        // Prefer Qwen's explicit kind; fallback to toolCallId prefix; then invocation/tool
+        let toolName = ''
+        const rawKind = typeof upd?.kind === 'string' ? (upd.kind as string).trim() : ''
+        if (rawKind) toolName = rawKind
+        if (!toolName) {
+          const rawId = (upd?.toolCallId || '') as string
+          if (rawId) {
+            for (const sep of ['-', '_']) {
+              const base = rawId.split(sep, 1)[0]
+              const low = (base || '').toLowerCase()
+              if (base && low !== 'call' && low !== 'tool' && low !== 'toolcall') { toolName = base; break }
+            }
+          }
         }
+        if (!toolName) toolName = (upd?.invocation?.tool || upd?.title || upd?.kind || '') as string
+        const baseInput = (upd?.invocation?.args || {}) as any
+        const enriched: any = { ...baseInput }
+        try {
+          let p: string | undefined
+          const locs = upd?.locations
+          if (Array.isArray(locs) && locs.length) {
+            const first = locs[0]
+            if (first && typeof first === 'object') {
+              p = (first.path || first.file || first.file_path || first.filePath || first.uri) as string | undefined
+              if (p && typeof p === 'string' && p.startsWith('file://')) p = p.slice('file://'.length)
+            }
+          }
+          if (!p) {
+            const content = upd?.content
+            if (Array.isArray(content)) {
+              for (const c of content) {
+                if (c && typeof c === 'object') {
+                  p = (c.path || c.file || c.file_path || (c.args && c.args.path)) as string | undefined
+                  if (p) break
+                }
+              }
+            }
+          }
+          if (p && !enriched.path) enriched.path = String(p)
+        } catch {}
+
+        const summary = summarizeTool(toolName, enriched)
+        // Suppress opaque tool names and executing noise like FastAPI
+        const low = (toolName || '').toLowerCase()
+        if (low === 'call' || low === 'tool' || low === 'toolcall' || low.startsWith('call_') || low.startsWith('call-')) {
+          continue
+        }
+        if (summary.trim().endsWith('`executing...`')) {
+          continue
+        }
+        // Flush buffered chat before tool summary
+        if (thought.length || text.length) {
+          yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'qwen' } }
+          thought.length = 0; text.length = 0; lastFlushAt = Date.now()
+        }
+        console.log(`🔧 ${summary}`)
+        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'qwen', event_type: 'tool_call', tool_name: toolName, tool_input: enriched, original_event: upd } }
         continue
       }
       if (kind === 'plan') {
@@ -511,7 +715,31 @@ class GeminiAdapter implements CLIAdapter {
       if (sessionId) await setGeminiSessionId(projectId, sessionId)
     }
     const q: any[] = []
-    client.onNotification('session/update', (params) => { if (params?.sessionId === sessionId) q.push(params.update || {}) })
+    let currentSessionId: string | null = sessionId
+    // Register notification handler with dynamic sessionId check
+    client.onNotification('session/update', (params) => { 
+      console.log(`🔔 [GeminiAdapter] Raw notification received:`, {
+        expected: currentSessionId,
+        received: params?.sessionId,
+        rawParams: JSON.stringify(params).substring(0, 200)
+      })
+      if (params?.sessionId === currentSessionId) {
+        const update = params.update || {}
+        console.log(`🔔 [GeminiAdapter] Notification received:`, {
+          sessionId: params.sessionId,
+          updateType: update.sessionUpdate || update.type,
+          hasContent: !!(update.content?.text || update.text),
+          contentLength: (update.content?.text || update.text || '').length,
+          queueLength: q.length
+        })
+        q.push(update)
+      } else {
+        console.log(`🔔 [GeminiAdapter] Notification ignored - wrong session:`, {
+          expected: currentSessionId,
+          received: params?.sessionId
+        })
+      }
+    })
     // Build prompt parts
     const parts: any[] = []
     if (opts.instruction) parts.push({ type: 'text', text: opts.instruction })
@@ -542,45 +770,179 @@ class GeminiAdapter implements CLIAdapter {
         }
       }
     }
-    await client.request('session/prompt', { sessionId, prompt: parts })
+    // Add session prompt logging
+    console.log(`📤 [GeminiAdapter] Sending prompt:`, {
+      sessionId,
+      partsCount: parts.length,
+      instructionLength: opts.instruction?.length || 0
+    })
+    
+    // Send prompt in parallel with queue processing (Python FastAPI style)
+    console.log(`⚡ [GeminiAdapter] Starting session/prompt request...`)
+    
+    const createPromptTaskGemini = () => {
+      return client.request('session/prompt', { sessionId, prompt: parts })
+        .then(() => {
+          console.log(`✅ [GeminiAdapter] session/prompt request completed`)
+          return { completed: true }
+        })
+        .catch(async (e: any) => {
+          const msg = e?.message ? String(e.message) : String(e)
+          if (/session not found/i.test(msg)) {
+            try {
+              const res = await client.request('session/new', { cwd: repoCwd, mcpServers: [] })
+              sessionId = res?.sessionId || null
+              currentSessionId = sessionId  // Update notification handler sessionId
+              if (sessionId) { try { await setGeminiSessionId(projectId, sessionId) } catch {} }
+              await client.request('session/prompt', { sessionId, prompt: parts })
+              console.log(`✅ [GeminiAdapter] session/prompt recovered and completed`)
+              return { completed: true }
+            } catch (e2: any) {
+              return { error: `Gemini session recovery failed: ${e2?.message || e2}` }
+            }
+          } else {
+            return { error: `Gemini prompt error: ${msg}` }
+          }
+        })
+    }
+    
+    let promptTaskGemini = createPromptTaskGemini()
+    let promptCompletedGemini = false
     const thought: string[] = []
     const text: string[] = []
+    // Track last flush time to stream incrementally
+    let lastFlushAt = Date.now()
     const compose = () => {
       const parts: string[] = []
       if (thought.length) parts.push(`<thinking>${thought.join('')}</thinking>`)
       if (text.length) { if (parts.length) parts.push('\n\n'); parts.push(text.join('')) }
       return parts.join('')
     }
-    const MAX_IDLE_TIME_GEMINI = 30000 // 30 seconds without updates = timeout
-    let lastUpdateTimeGemini = Date.now()
+    const MAX_IDLE_TIME_GEMINI = 3000 // 3 seconds without updates = timeout
     
-    // Drain updates with timeout-based approach instead of fixed loop count
-    while (true) {
-      const upd = q.shift()
-      if (!upd) { 
-        // Check for timeout
-        if (Date.now() - lastUpdateTimeGemini > MAX_IDLE_TIME_GEMINI) {
-          console.log('[GeminiAdapter] No updates for 30s, assuming completion')
-          break
+    // Python-style concurrent processing: prompt + queue processing
+    const createUpdatePromiseGemini = () => {
+      return new Promise<{ type: 'update', data: any }>((resolve) => {
+        const checkQueue = () => {
+          if (q.length > 0) {
+            const update = q.shift()
+            console.log(`⚡ [GeminiAdapter] Processing queued update:`, {
+              type: update.sessionUpdate || update.type,
+              queueLength: q.length
+            })
+            resolve({ type: 'update', data: update })
+          } else {
+            setTimeout(checkQueue, 10) // Check every 10ms instead of 100ms
+          }
         }
-        await new Promise((r) => setTimeout(r, 100)); 
-        continue 
+        checkQueue()
+      })
+    }
+    
+    const createTimeoutPromiseGemini = () => {
+      return new Promise<{ type: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ type: 'timeout' }), MAX_IDLE_TIME_GEMINI)
+      })
+    }
+    
+    // Start concurrent processing immediately (like Python asyncio.wait)
+    while (true) {
+      const promisesGemini: Promise<any>[] = []
+      
+      // Only include promptTask if not completed yet
+      if (!promptCompletedGemini) {
+        promisesGemini.push(promptTaskGemini.then(r => ({ type: 'prompt', result: r })))
       }
-      lastUpdateTimeGemini = Date.now() // Reset timeout on new update
+      promisesGemini.push(createUpdatePromiseGemini()) // Create fresh Promise each time
+      promisesGemini.push(createTimeoutPromiseGemini()) // Create fresh Promise each time
+      
+      const result = await Promise.race(promisesGemini)
+      
+      if (result.type === 'prompt') {
+        // Prompt completed - check for errors
+        promptCompletedGemini = true
+        const promptResult = (result as any).result
+        if (promptResult.error) {
+          yield { kind: 'message', content: promptResult.error, role: 'assistant', messageType: 'error', metadata: { cli_type: 'gemini' } }
+          yield { kind: 'result', success: false, error: promptResult.error }
+          return
+        }
+        // Continue processing remaining queue items until timeout
+        console.log('[GeminiAdapter] Prompt completed, draining remaining updates...')
+        continue
+      } else if (result.type === 'timeout') {
+        console.log('[GeminiAdapter] No updates for 3s, assuming completion')
+        break
+      }
+      
+      // Process update
+      const upd = (result as any).data
       const kind = upd.sessionUpdate || upd.type
       if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
         const t = (upd.content?.text ?? upd.text ?? '') as string
+        if (!t) { continue }
         if (kind === 'agent_thought_chunk') thought.push(t); else text.push(t)
+        // Flush partial updates periodically for realtime UI streaming
+        const now = Date.now()
+        const bufferedLen = (thought.join('').length + text.join('').length)
+        if ((now - lastFlushAt) > 200 || t.includes('\n') || bufferedLen > 400) {
+          const msg = compose()
+          if (msg) {
+            yield { kind: 'message', content: msg.replace(/\r?\n$/, ''), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }
+            thought.length = 0; text.length = 0
+            lastFlushAt = now
+          }
+        }
         continue
       }
       if (kind === 'tool_call' || kind === 'tool_call_update') {
-        if (kind === 'tool_call_update') continue
-        if (thought.length || text.length) { yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }; thought.length = 0; text.length = 0 }
-        const toolName = (upd?.invocation?.tool || '') as string
-        const input = upd?.invocation?.args || {}
-        const summary = summarizeTool(toolName, input)
+        // Enrich tool input similar to FastAPI: pull path from locations/content
+        const toolName = (upd?.invocation?.tool || upd?.title || upd?.kind || '') as string
+        const baseInput = (upd?.invocation?.args || {}) as any
+        const enriched: any = { ...baseInput }
+        try {
+          let p: string | undefined
+          const locs = upd?.locations
+          if (Array.isArray(locs) && locs.length) {
+            const first = locs[0]
+            if (first && typeof first === 'object') {
+              p = (first.path || first.file || first.file_path || first.filePath || first.uri) as string | undefined
+              if (p && typeof p === 'string' && p.startsWith('file://')) p = p.slice('file://'.length)
+            }
+          }
+          if (!p) {
+            const content = upd?.content
+            if (Array.isArray(content)) {
+              for (const c of content) {
+                if (c && typeof c === 'object') {
+                  p = (c.path || c.file || c.file_path || (c.args && c.args.path)) as string | undefined
+                  if (p) break
+                }
+              }
+            }
+          }
+          if (p && !enriched.path) enriched.path = String(p)
+        } catch {}
+
+        const summary = summarizeTool(toolName, enriched)
+        // Decide render policy like FastAPI: Write → updates only, others → start only
+        let normalized = ''
+        try { const m = summary.match(/^\*\*([^*]+)\*\*/) ; normalized = m ? m[1] : '' } catch {}
+        let shouldRender = false
+        if ((normalized === 'Write' && kind === 'tool_call_update') || (normalized !== 'Write' && kind === 'tool_call')) {
+          shouldRender = true
+        }
+        // For updates, emit only when we have meaningful info
+        if (!shouldRender || (kind === 'tool_call_update' && Object.keys(enriched || {}).length === 0 && !toolName)) {
+          continue
+        }
+        // Flush any pending assistant text before tool summary for timeline correctness
+        if (thought.length || text.length) {
+          yield { kind: 'message', content: compose(), role: 'assistant', messageType: 'chat', metadata: { cli_type: 'gemini' } }
+          thought.length = 0; text.length = 0; lastFlushAt = Date.now()
+        }
         console.log(`🔧 ${summary}`)
-        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', event_type: 'tool_call', tool_name: toolName, tool_input: input, original_event: upd } }
+        yield { kind: 'message', content: summary, role: 'assistant', messageType: 'tool_use', metadata: { cli_type: 'gemini', event_type: 'tool_call', tool_name: toolName, tool_input: enriched, original_event: upd, update_type: kind } }
         continue
       }
       if (kind === 'plan') {
@@ -639,7 +1001,25 @@ async function ensureAgentsMd(projectPath: string) {
 async function getCursorSessionId(projectId: string): Promise<string | null> {
   const prisma = await getPrisma()
   const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
-  return p?.activeCursorSessionId || null
+  const raw = p?.activeCursorSessionId
+  if (!raw) return null
+  // activeCursorSessionId can be either a plain string (legacy) or a JSON bag
+  try {
+    const data = JSON.parse(raw)
+    if (data && typeof data === 'object' && data.cursor) return String(data.cursor)
+  } catch {}
+  return String(raw)
+}
+
+async function setCursorSessionId(projectId: string, sessionId: string) {
+  const prisma = await getPrisma()
+  const p = await (prisma as any).project.findUnique({ where: { id: projectId } })
+  let current: any = {}
+  if (p?.activeCursorSessionId) {
+    try { current = JSON.parse(p.activeCursorSessionId) } catch { current = { cursor: p.activeCursorSessionId } }
+  }
+  current.cursor = sessionId
+  await (prisma as any).project.update({ where: { id: projectId }, data: { activeCursorSessionId: JSON.stringify(current) } })
 }
 
 async function getCodexRolloutPath(projectId: string): Promise<string | null> {
@@ -689,40 +1069,46 @@ function summarizeTool(tool: string, args: any): string {
   const t = String(tool || '')
   const tt = t.toLowerCase()
   // Normalize to UI-expected pattern: **Tool** `arg`
-  if (tt === 'exec_command' || tt === 'bash' || tt === 'exec') {
+  if (tt === 'exec_command' || tt === 'bash' || tt === 'exec' || tt === 'shell' || tt === 'run_terminal_command') {
     const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
     return `**Bash** \`${cmd}\``
   }
-  if (tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch' || tt === 'websearch') {
+  if (tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch' || tt === 'websearch' || tt === 'google_web_search' || tt === 'googlesearch') {
     const q = args?.query || args?.q || ''
     return `**WebSearch** \`${q}\``
   }
-  if (tt === 'read') {
-    const p = args?.path || args?.file || ''
+  if (tt === 'read' || tt === 'read_file' || tt === 'readfile' || tt === 'readmanyfiles') {
+    const p = args?.file_path || args?.path || args?.file || ''
     return `**Read** \`${p}\``
   }
-  if (tt === 'write') {
-    const p = args?.path || args?.file || ''
+  if (tt === 'write' || tt === 'write_file' || tt === 'writefile') {
+    const p = args?.file_path || args?.path || args?.file || ''
     return `**Write** \`${p}\``
   }
-  if (tt === 'edit' || tt === 'multiedit') {
-    const p = args?.path || args?.file || ''
+  if (tt === 'edit' || tt === 'multiedit' || tt === 'edit_file' || tt === 'replace') {
+    const p = args?.file_path || args?.path || args?.file || ''
     return `**Edit** \`${p}\``
   }
-  if (tt === 'ls') {
-    const p = args?.path || args?.dir || ''
+  if (tt === 'ls' || tt === 'list_directory' || tt === 'list_dir' || tt === 'readfolder') {
+    const p = args?.path || args?.directory || args?.dir || ''
     return `**LS** \`${p}\``
   }
-  if (tt === 'glob') {
-    const p = args?.pattern || ''
+  if (tt === 'glob' || tt === 'find_files') {
+    const p = args?.pattern || args?.name || ''
     return `**Glob** \`${p}\``
   }
-  if (tt === 'grep') {
-    const p = args?.pattern || ''
+  if (tt === 'grep' || tt === 'search_file_content' || tt === 'codebase_search' || tt === 'search') {
+    const p = args?.pattern || args?.query || ''
     return `**Grep** \`${p}\``
   }
   if (tt === 'todowrite' || tt === 'todo_write') {
     return `**TodoWrite** \`Todo List\``
+  }
+  if (tt === 'mcp_tool_call') {
+    const server = args?.server || ''
+    const toolname = args?.tool || ''
+    const disp = [server, toolname].filter(Boolean).join('.')
+    return `**MCP** \`${disp || 'tool call'}\``
   }
   return `**${t}**`
 }

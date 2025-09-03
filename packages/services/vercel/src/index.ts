@@ -1,5 +1,5 @@
 import { getPrisma } from '@repo/db'
-import { wsRegistry } from '@repo/ws'
+import { publish } from '@repo/ws'
 
 type VercelProject = { id: string; name: string; url: string }
 type VercelDeployment = { id: string; url: string; state: string; createdAt: number }
@@ -38,16 +38,41 @@ export async function checkProjectAvailable(projectName: string): Promise<{ avai
 export async function connectVercelProject(projectId: string, name: string): Promise<{ success: boolean; project?: VercelProject; message: string }> {
   const prisma = await getPrisma()
   try {
-    // Create minimal project (best-effort)
-    const res = await vFetch('/v10/projects', { method: 'POST', body: JSON.stringify({ name }) })
+    // Require GitHub connection to mirror FastAPI behavior
+    const gh = await (prisma as any).projectServiceConnection.findFirst({ where: { projectId, provider: 'github' } })
+    if (!gh) throw new Error('GitHub repository must be connected first before connecting Vercel')
+    const ghData = gh?.serviceData ? JSON.parse(gh.serviceData) : {}
+    const fullName = ghData.full_name
+    if (!fullName) throw new Error('GitHub repository full_name is missing. Please reconnect GitHub repository.')
+
+    // Create Vercel project linked to GitHub repository (parity with FastAPI)
+    const payload = {
+      name,
+      framework: 'nextjs',
+      gitRepository: { type: 'github', repo: fullName },
+    }
+    const res = await vFetch('/v11/projects', { method: 'POST', body: JSON.stringify(payload) })
     if (!res.ok) throw new Error(`Vercel create failed: ${res.status}`)
     const data = await res.json()
-    const proj: VercelProject = { id: data.id, name: data.name, url: data.link?.url || `https://${data.name}.vercel.app` }
+    const proj: VercelProject = {
+      id: data.id,
+      name: data.name,
+      url: data.link?.url || `https://${data.name}.vercel.app`,
+    }
+
+    // Persist connection with richer metadata like FastAPI
+    const svcData = {
+      project_id: data.id,
+      project_name: data.name,
+      framework: data.framework || 'nextjs',
+      project_url: `https://vercel.com/${data.accountId || 'dashboard'}/${data.name}`,
+      deployment_url: proj.url,
+    }
     const existing = await (prisma as any).projectServiceConnection.findFirst({ where: { projectId, provider: 'vercel' } })
     if (existing) {
-      await (prisma as any).projectServiceConnection.update({ where: { id: existing.id }, data: { status: 'connected', serviceData: JSON.stringify(proj), updatedAt: new Date() } })
+      await (prisma as any).projectServiceConnection.update({ where: { id: existing.id }, data: { status: 'connected', serviceData: JSON.stringify(svcData), updatedAt: new Date() } })
     } else {
-      await (prisma as any).projectServiceConnection.create({ data: { id: (globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID(), projectId, provider: 'vercel', status: 'connected', serviceData: JSON.stringify(proj), createdAt: new Date() } })
+      await (prisma as any).projectServiceConnection.create({ data: { id: (globalThis as any).crypto?.randomUUID?.() || require('node:crypto').randomUUID(), projectId, provider: 'vercel', status: 'connected', serviceData: JSON.stringify(svcData), createdAt: new Date() } })
     }
     return { success: true, project: proj, message: 'Vercel connected' }
   } catch (e: any) {
@@ -58,40 +83,45 @@ export async function connectVercelProject(projectId: string, name: string): Pro
 export async function createDeployment(projectId: string, branch?: string): Promise<{ success: boolean; deployment?: VercelDeployment; message: string }> {
   try {
     const prisma = await getPrisma();
-    
+
+    // Resolve Vercel project info (align with FastAPI behavior)
+    const vercelConn = await (prisma as any).projectServiceConnection.findFirst({
+      where: { projectId, provider: 'vercel' }
+    })
+    if (!vercelConn) throw new Error('Vercel project not connected')
+    const vercelData = vercelConn.serviceData ? JSON.parse(vercelConn.serviceData) : {}
+    // Be tolerant to different keys set during connect (project_id/project_name vs id/name)
+    const vercelProjectId = vercelData.project_id || vercelData.id
+    const vercelProjectName = vercelData.project_name || vercelData.name
+
     // Get GitHub connection data for branch resolution
     const githubConn = await (prisma as any).projectServiceConnection.findFirst({ 
       where: { projectId, provider: 'github' } 
-    });
-    
-    const githubData = githubConn?.serviceData ? JSON.parse(githubConn.serviceData) : {};
-    const preferredBranch = branch || 
-      githubData.last_pushed_branch ||
-      githubData.default_branch ||
-      'main';
+    })
+    if (!githubConn) throw new Error('GitHub repository not connected')
 
-    console.log(`Creating Vercel deployment for project ${projectId} using branch: ${preferredBranch}`);
+    const githubData = githubConn?.serviceData ? JSON.parse(githubConn.serviceData) : {}
+    const preferredBranch = branch || githubData.last_pushed_branch || githubData.default_branch || 'main'
 
-    // Build deployment payload with git source
-    const deploymentPayload = {
-      gitSource: {
-        type: 'github',
-        ref: preferredBranch
-      }
-    };
+    console.log(`Creating Vercel deployment for project ${projectId} using branch: ${preferredBranch}`)
 
-    const res = await vFetch('/v13/deployments', { 
-      method: 'POST', 
-      body: JSON.stringify(deploymentPayload) 
-    });
-    
+    // Build deployment payload with explicit project info and git source
+    const deploymentPayload: any = {
+      gitSource: { type: 'github', ref: preferredBranch }
+    }
+    // Use either project id or name so Vercel knows which project to deploy
+    if (vercelProjectId) deploymentPayload.project = vercelProjectId
+    if (!vercelProjectId && vercelProjectName) deploymentPayload.name = vercelProjectName
+
+    const res = await vFetch('/v13/deployments', { method: 'POST', body: JSON.stringify(deploymentPayload) })
     if (!res.ok) throw new Error(`Vercel deployment failed: ${res.status}`)
+
     const data = await res.json()
-    const dep: VercelDeployment = { 
-      id: data.id, 
-      url: data.url, 
-      state: data.state || 'CREATED', 
-      createdAt: data.createdAt || Date.now() 
+    const dep: VercelDeployment = {
+      id: data.id,
+      url: data.url,
+      state: data.state || data.readyState || 'CREATED',
+      createdAt: data.createdAt || Date.now()
     }
     // Start monitoring this deployment
     startMonitoring(projectId, dep.id).catch(() => {})
@@ -192,7 +222,7 @@ async function startMonitoring(projectId: string, deploymentId: string) {
       await updateDeploymentStatusInDb(projectId, s)
       if (s.status === 'READY' || s.status === 'ERROR') {
         try {
-          wsRegistry.broadcast(projectId, { type: s.status === 'READY' ? 'project_status' : 'project_status', data: { status: s.status === 'READY' ? 'vercel_ready' : 'vercel_error', message: s.url || s.status } } as any)
+          publish(projectId, { type: 'project_status', data: { status: s.status === 'READY' ? 'vercel_ready' : 'vercel_error', message: s.url || s.status } } as any)
         } catch {}
         clearInterval(timer); monitoring.delete(projectId)
       }

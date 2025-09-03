@@ -1,9 +1,10 @@
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getPrisma } from '@repo/db'
-import { wsRegistry } from '@repo/ws'
+import { publish } from '@repo/ws'
 
 function parseMeta(meta: any): any | null {
   if (!meta) return null
@@ -86,7 +87,7 @@ export async function POST(req: Request, ctx: { params: { projectId: string } })
       },
       timestamp: new Date().toISOString(),
     }
-    wsRegistry.broadcast(projectId, event as any)
+    try { await publish(projectId, event as any) } catch {}
     return NextResponse.json({
       id: row.id,
       role: row.role,
@@ -112,7 +113,7 @@ export async function DELETE(req: Request, ctx: { params: { projectId: string } 
     const where: any = { projectId }
     if (conversationId) where.conversationId = conversationId
     const res = await (prisma as any).message.deleteMany({ where })
-    wsRegistry.broadcast(projectId, { type: 'messages_cleared', project_id: projectId, conversation_id: conversationId || undefined } as any)
+    try { await publish(projectId, { type: 'messages_cleared', project_id: projectId, conversation_id: conversationId || undefined } as any) } catch {}
     return NextResponse.json({ deleted: res.count || 0 })
   } catch (e) {
     return NextResponse.json({ detail: 'Failed to delete messages' }, { status: 500 })

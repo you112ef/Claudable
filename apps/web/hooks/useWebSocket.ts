@@ -29,6 +29,11 @@ export function useWebSocket({
   const lastPrimeAtRef = useRef<number>(0);
   const shouldReconnectRef = useRef(true);
   const [isConnected, setIsConnected] = useState(false);
+  const mountedOnceRef = useRef(false);
+
+  // Per-project priming guard (singleton across components)
+  const primeRegistry: Map<string, number> = (globalThis as any).__WS_PRIME_REGISTRY__ || new Map();
+  ;(globalThis as any).__WS_PRIME_REGISTRY__ = primeRegistry
 
   // Keep latest callbacks in refs to avoid reconnecting or using stale closures
   const onMessageRef = useRef(onMessage);
@@ -44,7 +49,8 @@ export function useWebSocket({
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   const connect = useCallback(async () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // Avoid duplicate connects while an existing socket is OPEN or CONNECTING
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
@@ -60,13 +66,17 @@ export function useWebSocket({
       const wsBase = (typeof window !== 'undefined' ? `${defaultProto}://${window.location.host}` : 'ws://localhost:3000');
       const fullUrl = `${wsBase}/api/ws/chat/${projectId}`;
 
-      // Best-effort: try to prime WS server, but never abort on failure
+      // Best-effort: try to prime WS server once per project (and throttled)
       try {
-        // Throttle priming to avoid spamming on rapid retries
         const now = Date.now();
-        if (now - lastPrimeAtRef.current > 1500) {
+        const lastGlobalPrime = primeRegistry.get(projectId) || 0;
+        const lastLocalPrime = lastPrimeAtRef.current || 0;
+        const shouldPrime = (now - lastGlobalPrime > 5000) && (now - lastLocalPrime > 5000);
+        if (shouldPrime) {
           lastPrimeAtRef.current = now;
-          await fetch(`/api/ws/chat/${projectId}`);
+          primeRegistry.set(projectId, now);
+          // Fire-and-forget; do not await
+          fetch(`/api/ws/chat/${projectId}`).catch(() => {});
         }
       } catch (error) {
         // Proceed regardless of priming failure
@@ -99,10 +109,19 @@ export function useWebSocket({
           
           const data = JSON.parse(event.data);
           
-          // Debug: Log all incoming WebSocket messages
-          if (data.type === 'message') {
-            console.log('🔌 [WebSocket] Received message:', data.data?.message_type, data.data?.content?.length + ' chars');
-          }
+          // Debug: Log message types (helps diagnose streaming)
+          try {
+            if (process.env.NODE_ENV !== 'production') {
+              const t = data.type
+              if (t === 'message') {
+                console.log('🔌 [WS] message:', data.data?.message_type, (data.data?.content?.length || 0) + ' chars')
+              } else if (t === 'message_delta') {
+                console.log('🔌 [WS] delta:', data.data?.seq, (data.data?.content_delta?.length || 0) + ' chars')
+              } else if (t === 'message_commit') {
+                console.log('🔌 [WS] commit:', (data.data?.message_id || '').slice(0, 8), (data.data?.content_full?.length || 0) + ' chars')
+              }
+            }
+          } catch {}
           
           const _onMsg = onMessageRef.current;
           const _onSt = onStatusRef.current;
@@ -122,6 +141,8 @@ export function useWebSocket({
             _onSt('act_complete', data.data, data.data?.request_id);
           } else if (data.type === 'chat_complete' && _onSt) {
             _onSt('chat_complete', data.data, data.data?.request_id);
+          } else if ((data.type === 'message_delta' || data.type === 'message_commit') && _onSt) {
+            _onSt(data.type, data.data)
           } else {
           }
         } catch (error) {
@@ -141,7 +162,7 @@ export function useWebSocket({
           pingIntervalRef.current = null;
         }
         if (connectTimeout) { clearTimeout(connectTimeout); connectTimeout = null; }
-        
+
         // Only reconnect if we should and haven't exceeded attempts
         if (shouldReconnectRef.current) {
           const attempts = connectionAttemptsRef.current + 1;
@@ -151,9 +172,6 @@ export function useWebSocket({
           const base = attempts <= 1 ? 500 : Math.min(60000, 500 * Math.pow(2, attempts));
           const jitter = Math.floor(Math.random() * 250);
           const delay = Math.min(60000, base + jitter);
-
-          // Best-effort prime just before reconnect (throttled above in connect)
-          try { fetch(`/api/ws/chat/${projectId}`).catch(() => {}); } catch {}
 
           reconnectTimeoutRef.current = setTimeout(() => {
             connect().catch(() => {});
@@ -195,12 +213,19 @@ export function useWebSocket({
   useEffect(() => {
     shouldReconnectRef.current = true;
     connectionAttemptsRef.current = 0;
-    connect().catch(() => {});
-    
+    // Guard against StrictMode double-invoke by ensuring single initial connect
+    if (!mountedOnceRef.current) {
+      mountedOnceRef.current = true;
+      connect().catch(() => {});
+    } else {
+      // If already mounted once, only connect when no socket exists
+      if (!wsRef.current) connect().catch(() => {});
+    }
+
     return () => {
       disconnect();
     };
-  }, [projectId, connect]);
+  }, [projectId, connect, disconnect]);
 
   return {
     isConnected,

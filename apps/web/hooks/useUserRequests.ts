@@ -13,8 +13,13 @@ export function useUserRequests({ projectId }: UseUserRequestsOptions) {
   const [hasActiveRequests, setHasActiveRequests] = useState(false);
   const [activeCount, setActiveCount] = useState(0);
   const [isTabVisible, setIsTabVisible] = useState(true); // 기본값 true로 설정
-  
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // --- Global singleton poller per project to avoid duplicated intervals ---
+  type Listener = (data: { hasActiveRequests: boolean; activeCount: number }) => void
+  type Poller = { subscribers: Set<Listener>; timer: NodeJS.Timeout | null; last: { hasActiveRequests: boolean; activeCount: number } }
+  const POLLERS: Map<string, Poller> = (globalThis as any).__USER_REQUESTS_POLLERS__ || new Map();
+  ;(globalThis as any).__USER_REQUESTS_POLLERS__ = POLLERS
+
   const previousActiveState = useRef(false);
 
   // 탭 활성화 상태 추적
@@ -34,21 +39,17 @@ export function useUserRequests({ projectId }: UseUserRequestsOptions) {
     }
   }, []);
 
-  // DB에서 활성 요청 상태 조회
+  // DB에서 활성 요청 상태 조회 (singleton poller가 사용)
   const checkActiveRequests = useCallback(async () => {
-    if (!isTabVisible) return; // 탭이 비활성화되어 있으면 폴링 중지
-
     try {
       const response = await fetch(`/api/chat/${projectId}/requests/active`);
       if (response.ok) {
         const data: ActiveRequestsResponse = await response.json();
-        setHasActiveRequests(data.hasActiveRequests);
-        setActiveCount(data.activeCount);
-        
-        // 활성 상태가 변경되었을 때만 로그 출력
-        if (data.hasActiveRequests !== previousActiveState.current) {
-          console.log(`🔄 [UserRequests] Active requests: ${data.hasActiveRequests} (count: ${data.activeCount})`);
-          previousActiveState.current = data.hasActiveRequests;
+        const poller = POLLERS.get(projectId);
+        if (poller) {
+          poller.last = { hasActiveRequests: data.hasActiveRequests, activeCount: data.activeCount };
+          // 알림 브로드캐스트
+          poller.subscribers.forEach((fn) => fn(poller.last));
         }
       }
     } catch (error) {
@@ -56,52 +57,54 @@ export function useUserRequests({ projectId }: UseUserRequestsOptions) {
         console.error('[UserRequests] Failed to check active requests:', error);
       }
     }
-  }, [projectId, isTabVisible]);
+  }, [POLLERS, projectId]);
 
-  // 적응형 폴링 설정
+  // 적응형 폴링 설정 (singleton 방식)
   useEffect(() => {
-    // 탭이 비활성화되어 있으면 폴링 중지
-    if (!isTabVisible) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-
-    // 활성 요청 상태에 따른 폴링 간격 결정
-    const pollInterval = hasActiveRequests ? 500 : 5000; // 0.5초 vs 5초
-    
-    // 기존 폴링 정리
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    // 즉시 한 번 확인
-    checkActiveRequests();
-
-    // 새로운 폴링 시작
-    intervalRef.current = setInterval(checkActiveRequests, pollInterval);
-
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`⏱️ [UserRequests] Polling interval: ${pollInterval}ms (active: ${hasActiveRequests})`);
-    }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+    // 구독자 등록
+    const listener: Listener = (d) => {
+      setHasActiveRequests(d.hasActiveRequests);
+      setActiveCount(d.activeCount);
+      if (d.hasActiveRequests !== previousActiveState.current) {
+        console.log(`🔄 [UserRequests] Active requests: ${d.hasActiveRequests} (count: ${d.activeCount})`);
+        previousActiveState.current = d.hasActiveRequests;
       }
     };
-  }, [hasActiveRequests, isTabVisible, checkActiveRequests]);
 
-  // 컴포넌트 언마운트 시 정리
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+    let poller = POLLERS.get(projectId);
+    if (!poller) {
+      poller = { subscribers: new Set<Listener>(), timer: null, last: { hasActiveRequests: false, activeCount: 0 } };
+      POLLERS.set(projectId, poller);
+    }
+    poller.subscribers.add(listener);
+
+    // 폴링 타이머가 없다면 생성
+    const ensureTimer = () => {
+      if (poller && !poller.timer) {
+        // 즉시 1회
+        checkActiveRequests();
+        // 1초 기본 주기, 활성일 경우 내부에서 추가 호출되므로 과도하지 않게 유지
+        poller.timer = setInterval(() => {
+          // 탭 비활성화 시 네트워크 절약 (단, 기존 구독자들은 마지막 값 유지)
+          if (isTabVisible) checkActiveRequests();
+        }, 1000);
       }
     };
-  }, []);
+    ensureTimer();
+
+    // 구독 해제 및 정리
+    return () => {
+      const p = POLLERS.get(projectId);
+      if (!p) return;
+      p.subscribers.delete(listener);
+      if (p.subscribers.size === 0) {
+        if (p.timer) { clearInterval(p.timer); p.timer = null; }
+        POLLERS.delete(projectId);
+      }
+    };
+  }, [POLLERS, checkActiveRequests, isTabVisible, projectId]);
+
+  // 컴포넌트 언마운트 시 정리: singleton 정리는 위 effect의 cleanup에서 처리됨
 
   // WebSocket 이벤트용 플레이스홀더 함수들 (기존 인터페이스 유지)
   const createRequest = useCallback((

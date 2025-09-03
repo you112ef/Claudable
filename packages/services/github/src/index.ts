@@ -1,7 +1,16 @@
 import { getPrisma } from '@repo/db'
 import { hasChanges, commitAll } from '@repo/services-git'
 
-type GHRepo = { name: string; full_name: string; html_url: string; default_branch?: string }
+type GHRepo = {
+  id: number
+  name: string
+  full_name: string
+  html_url: string
+  clone_url?: string
+  ssh_url?: string
+  default_branch?: string
+  private?: boolean
+}
 
 async function getToken(): Promise<string | null> {
   const prisma = await getPrisma()
@@ -32,14 +41,40 @@ export async function isRepoAvailable(repoName: string): Promise<{ available: bo
   return { available: false, username: user.login, reason: `GitHub error: ${res.status}` }
 }
 
-export async function createRepo(repoName: string, description?: string): Promise<GHRepo> {
+export async function createRepo(repoName: string, description?: string, isPrivate: boolean = true): Promise<GHRepo> {
   const res = await ghFetch('/user/repos', {
     method: 'POST',
-    body: JSON.stringify({ name: repoName, description: description || '', private: true }),
+    body: JSON.stringify({ name: repoName, description: description || '', private: isPrivate }),
     headers: { 'Content-Type': 'application/json' },
   })
   if (!res.ok) throw new Error(`Create repo failed: ${res.status}`)
-  return res.json()
+  const data = await res.json()
+  return {
+    id: data.id,
+    name: data.name,
+    full_name: data.full_name,
+    html_url: data.html_url,
+    clone_url: data.clone_url,
+    ssh_url: data.ssh_url,
+    default_branch: data.default_branch,
+    private: data.private,
+  }
+}
+
+export async function getRepoDetails(owner: string, repo: string): Promise<GHRepo> {
+  const res = await ghFetch(`/repos/${owner}/${repo}`)
+  if (!res.ok) throw new Error(`Get repo failed: ${res.status}`)
+  const data = await res.json()
+  return {
+    id: data.id,
+    name: data.name,
+    full_name: data.full_name,
+    html_url: data.html_url,
+    clone_url: data.clone_url,
+    ssh_url: data.ssh_url,
+    default_branch: data.default_branch,
+    private: data.private,
+  }
 }
 
 export async function upsertGithubConnection(projectId: string, data: any) {
@@ -111,4 +146,3 @@ export async function pushToGithub(projectId: string, projectRepoPath: string, b
     return { success: false, message: 'push failed', error: e?.message || String(e) }
   }
 }
-

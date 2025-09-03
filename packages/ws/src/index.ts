@@ -19,6 +19,16 @@ export type WSPreviewError = { type: 'preview_error'; project_id: string; messag
 export type WSPreviewSuccess = { type: 'preview_success'; project_id: string; url: string; port: number }
 export type WSCliOutput = { type: 'cli_output'; output: string; cli_type: string }
 export type WSMessagesCleared = { type: 'messages_cleared'; project_id: string; conversation_id?: string }
+export type WSMessageDelta = {
+  type: 'message_delta'
+  data: { stream_id: string; seq: number; role: 'assistant' | 'system' | 'tool' | 'user'; message_type?: string | null; content_delta: string }
+  timestamp?: string
+}
+export type WSMessageCommit = {
+  type: 'message_commit'
+  data: { stream_id: string; message_id: string; created_at: string; role: 'assistant' | 'system' | 'tool' | 'user'; message_type?: string | null; content_full: string; conversation_id?: string | null; session_id?: string | null }
+  timestamp?: string
+}
 
 export type WSEvent =
   | WSMessageEvent
@@ -31,6 +41,8 @@ export type WSEvent =
   | WSPreviewSuccess
   | WSCliOutput
   | WSMessagesCleared
+  | WSMessageDelta
+  | WSMessageCommit
 
 export interface ProjectSocketLike {
   send: (data: string | ArrayBufferLike | Blob | ArrayBufferView) => void
@@ -39,10 +51,13 @@ export interface ProjectSocketLike {
 
 class ProjectRegistry {
   private rooms = new Map<string, Set<ProjectSocketLike>>()
+  private pending = new Map<string, Array<{ event: WSEvent; ts: number }>>()
 
   add(projectId: string, ws: ProjectSocketLike) {
     if (!this.rooms.has(projectId)) this.rooms.set(projectId, new Set())
     this.rooms.get(projectId)!.add(ws)
+    // On new connection, opportunistically flush any pending events
+    try { this.flushPending(projectId) } catch {}
   }
 
   remove(projectId: string, ws: ProjectSocketLike) {
@@ -83,6 +98,31 @@ class ProjectRegistry {
       // Silent failure - JSON serialization failed
     }
   }
+
+  queue(projectId: string, event: WSEvent) {
+    const now = Date.now()
+    const arr = this.pending.get(projectId) || []
+    // Maintain small queue, drop old ones beyond TTL
+    const TTL = 2000
+    const MAX = 50
+    const filtered = arr.filter((it) => now - it.ts <= TTL)
+    filtered.push({ event, ts: now })
+    while (filtered.length > MAX) filtered.shift()
+    this.pending.set(projectId, filtered)
+  }
+
+  flushPending(projectId: string) {
+    const set = this.rooms.get(projectId)
+    if (!set || set.size === 0) return
+    const items = this.pending.get(projectId)
+    if (!items || !items.length) return
+    const now = Date.now()
+    const TTL = 2000
+    // send only recent items
+    const recent = items.filter((it) => now - it.ts <= TTL)
+    this.pending.delete(projectId)
+    for (const it of recent) this.broadcast(projectId, it.event)
+  }
 }
 
 // Ensure a single registry instance across Next.js pages/app bundles
@@ -96,3 +136,43 @@ const registry: ProjectRegistry = (globalThis as any).__WS_REGISTRY__ || new Pro
 ;(globalThis as any).__WS_REGISTRY__ = registry
 
 export const wsRegistry = registry
+
+// Optional HTTP bridge publisher to reach WS server in a separate runtime
+export async function publish(projectId: string, event: WSEvent): Promise<void> {
+  const DISABLE_BRIDGE = (process.env.WS_DISABLE_BRIDGE === '1' || process.env.WS_DISABLE_BRIDGE === 'true')
+  try {
+    // Prefer direct broadcast when sockets are present in this runtime
+    try {
+      const hasSockets = typeof (wsRegistry as any).count === 'function' && (wsRegistry as any).count(projectId) > 0
+      if (hasSockets) {
+        wsRegistry.broadcast(projectId, event)
+        return
+      }
+    } catch {}
+
+    // In single-process local setup, skip HTTP bridge entirely if disabled via env
+    if (DISABLE_BRIDGE) {
+      // queue for short time to flush when connection arrives
+      try { (wsRegistry as any).queue(projectId, event) } catch {}
+      return
+    }
+
+    // Bridge URL resolution
+    const bridgeUrl = process.env.WS_BRIDGE_URL
+      || (process.env.WS_BRIDGE_BASE_URL ? `${process.env.WS_BRIDGE_BASE_URL.replace(/\/$/, '')}/api/ws/broadcast` : '')
+      || (typeof window !== 'undefined' ? `${window.location.origin}/api/ws/broadcast` : 'http://localhost:3000/api/ws/broadcast')
+
+    const token = process.env.WS_BRIDGE_TOKEN
+    // Fire-and-forget is acceptable for many call sites; still await here to surface errors to caller if awaited
+    await fetch(bridgeUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { 'x-ws-token': token } : {}),
+      },
+      body: JSON.stringify({ projectId, event }),
+    }).catch(() => {})
+  } catch {
+    // Swallow errors to avoid cascading failures in callers
+  }
+}

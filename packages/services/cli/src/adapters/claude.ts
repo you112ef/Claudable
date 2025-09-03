@@ -4,46 +4,57 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getPrisma } from '@repo/db'
 
-// Helper function for tool summaries (matching registry.ts)
+// Helper function for tool summaries (align with Python BaseCLI mapping)
 function summarizeTool(tool: string, args: any): string {
   const t = String(tool || '')
   const tt = t.toLowerCase()
-  if (tt === 'exec_command' || tt === 'bash' || tt === 'exec') {
-    const cmd = Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
-    return `**Bash** \`${cmd}\``
+
+  // Normalize tool names like FastAPI BaseCLI
+  const normalize = (name: string) => {
+    const key = name.toLowerCase()
+    const map: Record<string, string> = {
+      // File ops
+      'read': 'Read', 'read_file': 'Read', 'readfile': 'Read', 'readmanyfiles': 'Read',
+      'write': 'Write', 'write_file': 'Write', 'writefile': 'Write',
+      'edit': 'Edit', 'edit_file': 'Edit', 'replace': 'Edit', 'multiedit': 'MultiEdit',
+      'delete': 'Delete',
+      'ls': 'LS', 'list_directory': 'LS', 'list_dir': 'LS', 'readfolder': 'LS',
+      'grep': 'Grep', 'search_file_content': 'Grep', 'codebase_search': 'Grep', 'search': 'Grep',
+      'glob': 'Glob', 'find_files': 'Glob',
+      // Shell
+      'exec_command': 'Bash', 'bash': 'Bash', 'exec': 'Bash', 'run_terminal_command': 'Bash', 'shell': 'Bash',
+      // Web
+      'web_search': 'WebSearch', 'websearch': 'WebSearch', 'google_web_search': 'WebSearch',
+      'web_fetch': 'WebFetch', 'webfetch': 'WebFetch', 'fetch': 'WebFetch',
+      // Planning/Memory
+      'todowrite': 'TodoWrite', 'todo_write': 'TodoWrite', 'save_memory': 'SaveMemory', 'savememory': 'SaveMemory',
+      // MCP
+      'mcp_tool_call': 'MCPTool'
+    }
+    return map[key] || name
   }
-  if (tt === 'web_search' || tt === 'webfetch' || tt === 'web_fetch' || tt === 'websearch') {
-    const q = args?.query || args?.q || ''
-    return `**WebSearch** \`${q}\``
-  }
-  if (tt === 'read') {
-    const p = args?.path || args?.file || ''
-    return `**Read** \`${p}\``
-  }
-  if (tt === 'write') {
-    const p = args?.path || args?.file || ''
-    return `**Write** \`${p}\``
-  }
-  if (tt === 'edit' || tt === 'multiedit') {
-    const p = args?.path || args?.file || ''
-    return `**Edit** \`${p}\``
-  }
-  if (tt === 'ls') {
-    const p = args?.path || args?.dir || ''
-    return `**LS** \`${p}\``
-  }
-  if (tt === 'glob') {
-    const p = args?.pattern || ''
-    return `**Glob** \`${p}\``
-  }
-  if (tt === 'grep') {
-    const p = args?.pattern || ''
-    return `**Grep** \`${p}\``
-  }
-  if (tt === 'todowrite' || tt === 'todo_write') {
-    return `**TodoWrite** \`Todo List\``
-  }
-  return `**${t}**`
+
+  const name = normalize(t)
+
+  const getPath = () => (args?.file_path || args?.path || args?.file || args?.directory || '') as string
+  const getCmd = () => Array.isArray(args?.command) ? args.command.join(' ') : (args?.command ? String(args.command) : '')
+  const getPattern = () => (args?.pattern || args?.globPattern || args?.name || '') as string
+  const getQuery = () => (args?.query || args?.q || '') as string
+  const getUrl = () => (args?.url || '') as string
+
+  if (name === 'Bash') return `**Bash** \`${getCmd()}\``
+  if (name === 'Read') return `**Read** \`${getPath()}\``
+  if (name === 'Write') return `**Write** \`${getPath()}\``
+  if (name === 'Edit' || name === 'MultiEdit') return `**Edit** \`${getPath()}\``
+  if (name === 'Delete') return `**Delete** \`${getPath()}\``
+  if (name === 'LS') return `**LS** \`${getPath()}\``
+  if (name === 'Glob') return `**Glob** \`${getPattern()}\``
+  if (name === 'Grep') return `**Grep** \`${getPattern()}\``
+  if (name === 'WebSearch') return `**WebSearch** \`${getQuery()}\``
+  if (name === 'WebFetch') return `**WebFetch** \`${getUrl()}\``
+  if (name === 'TodoWrite') return '`Planning for next moves...`'
+
+  return `**${name}**`
 }
 
 type SDKMessage = any

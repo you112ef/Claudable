@@ -16,6 +16,31 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
     let filePath = '';
     let cleanContent: string | undefined = undefined;
     
+    // Normalize tool names similar to FastAPI BaseCLI mapping
+    const normalize = (name: string) => {
+      const k = (name || '').toLowerCase();
+      const map: Record<string, string> = {
+        // File operations
+        'read': 'Read', 'read_file': 'Read', 'readfile': 'Read', 'readmanyfiles': 'Read',
+        'write': 'Write', 'write_file': 'Write', 'writefile': 'Write',
+        'edit': 'Edit', 'edit_file': 'Edit', 'replace': 'Edit', 'multiedit': 'MultiEdit',
+        'delete': 'Delete',
+        'ls': 'LS', 'list_directory': 'LS', 'list_dir': 'LS', 'readfolder': 'LS',
+        'grep': 'Grep', 'search_file_content': 'Grep', 'codebase_search': 'Grep', 'search': 'Grep',
+        'glob': 'Glob', 'find_files': 'Glob',
+        // Terminal
+        'exec_command': 'Bash', 'bash': 'Bash', 'exec': 'Bash', 'run_terminal_command': 'Bash', 'shell': 'Bash',
+        // Web
+        'web_search': 'WebSearch', 'websearch': 'WebSearch', 'google_web_search': 'WebSearch',
+        'web_fetch': 'WebFetch', 'webfetch': 'WebFetch', 'fetch': 'WebFetch',
+        // Planning/Memory
+        'todowrite': 'TodoWrite', 'todo_write': 'TodoWrite', 'save_memory': 'SaveMemory', 'savememory': 'SaveMemory',
+        // MCP
+        'mcp_tool_call': 'MCPTool'
+      };
+      return map[k] || name;
+    };
+    
     // Normalize content to string
     if (typeof rawContent === 'string') {
       processedContent = rawContent;
@@ -69,7 +94,7 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
     } 
     // Check for **Tool** pattern with path/command
     else {
-      const toolMatch = processedContent.match(/\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|MultiEdit|TodoWrite)\*\*\s*`?([^`\n]+)`?/);
+      const toolMatch = processedContent.match(/\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|MultiEdit|TodoWrite|MCP)\*\*\s*`?([^`\n]+)`?/);
     if (toolMatch) {
       const toolName = toolMatch[1];
       const toolArg = toolMatch[2].trim();
@@ -110,6 +135,11 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
           filePath = toolArg.split('\n')[0]; // Just the first line
           cleanContent = undefined;
           break;
+        case 'MCP':
+          action = 'Executed';
+          filePath = toolArg;
+          cleanContent = undefined;
+          break;
         case 'TodoWrite':
           action = 'Generated';
           filePath = 'Todo List';
@@ -121,20 +151,37 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
     }
     } // Close the else block
     
-    // If no pattern matches but metadata has tool info, use that
+    // If no pattern matches but metadata has tool info, use that (canonicalize + pull args)
     if (metadata?.tool_name) {
-      const toolName = metadata.tool_name;
-      action = toolName === 'Bash' ? 'Executed' : 
+      const toolName = normalize(String(metadata.tool_name));
+      action = toolName === 'Bash' ? 'Executed' :
                toolName === 'Read' ? 'Read' :
                toolName === 'Write' ? 'Created' :
-               toolName === 'Edit' || toolName === 'MultiEdit' ? 'Edited' :
+               (toolName === 'Edit' || toolName === 'MultiEdit') ? 'Edited' :
+               toolName === 'Delete' ? 'Deleted' :
+               (toolName === 'LS' || toolName === 'Glob' || toolName === 'Grep' || toolName === 'WebSearch' || toolName === 'WebFetch') ? 'Searched' :
                'Executed';
-      
-      // Extract file path from content or use a generic label
-      filePath = processedContent.includes(':') 
-                ? processedContent.split(':').slice(1).join(':').trim()
-                : processedContent || `${toolName} operation`;
-      
+
+      const input: any = (metadata as any).tool_input || {};
+      const getPath = () => input.file_path || input.path || input.file || input.directory || '';
+      const getCmd = () => Array.isArray(input.command) ? input.command.join(' ') : (input.command || '');
+      const getPattern = () => input.pattern || input.globPattern || input.name || '';
+      const getQuery = () => input.query || input.q || '';
+      const getUrl = () => input.url || '';
+
+      if (toolName === 'Bash') { filePath = getCmd(); }
+      else if (toolName === 'Read' || toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'Delete' || toolName === 'LS') { filePath = getPath(); }
+      else if (toolName === 'Glob' || toolName === 'Grep') { filePath = getPattern(); }
+      else if (toolName === 'WebSearch') { filePath = getQuery(); }
+      else if (toolName === 'WebFetch') { filePath = getUrl(); }
+
+      // Fallback to parsing summary string if still empty
+      if (!filePath) {
+        const m = processedContent.match(/\*\*[^*]+\*\*\s*`?([^`\n]+)`?/);
+        if (m && m[1]) filePath = m[1].trim();
+      }
+      if (!filePath) filePath = `${toolName} operation`;
+
       cleanContent = undefined;
       return { action, filePath, cleanContent, toolName };
     }
@@ -144,16 +191,12 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
     return { action: 'Executed', filePath: '', cleanContent: processedContent, toolName: 'Unknown' };
   };
   
-  const { action, filePath, cleanContent, toolName } = processToolContent(content);
-  
-  // If no file path was found, this isn't actually a tool message
-  // Return null to not render anything
-  if (!filePath) {
-    return null;
-  }
+  const { action, filePath, cleanContent } = processToolContent(content);
+  // Do not reassign a const; derive a display value instead
+  const filePathDisplay = filePath || 'operation';
   
   // Use new ToolResultItem for clean display
-  return <ToolResultItem action={action as "Edited" | "Created" | "Read" | "Deleted" | "Generated" | "Searched" | "Executed"} filePath={filePath} content={cleanContent} />;
+  return <ToolResultItem action={action as "Edited" | "Created" | "Read" | "Deleted" | "Generated" | "Searched" | "Executed"} filePath={filePathDisplay} content={cleanContent} />;
 };
 
 // Removed unused WS_BASE; useWebSocket hook handles same-origin WS.
@@ -207,6 +250,11 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   const activeCheckRef = useRef<NodeJS.Timeout | null>(null);
   // Track whether current WS connection has actually delivered at least one message
   const wsHasDeliveredRef = useRef<boolean>(false);
+  const fallbackStartTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const initialLoadDoneRef = useRef<boolean>(false);
+  const historyLoadedOnceRef = useRef<boolean>(false);
+  // Track in-flight assistant stream bubbles by stream_id
+  const streamMapRef = useRef<Map<string, { tempId: string; seq: number }>>(new Map());
 
   // Use the centralized WebSocket hook
   const { isConnected } = useWebSocket({
@@ -215,18 +263,43 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       // Mark that WS stream is actively delivering
       wsHasDeliveredRef.current = true;
       // Handle chat messages from WebSocket
+      // Normalize assistant streaming chunks to avoid per-char newlines
+      let normalizedContent = message.content || ''
+      if ((message.role === 'assistant') && ((message.message_type as any) === 'chat' || !message.message_type)) {
+        // Cursor agent often sends trailing newlines per chunk; strip a single trailing newline
+        normalizedContent = normalizedContent.replace(/\r?\n$/, '')
+      }
+
       const chatMessage: ChatMessage = {
         id: message.id || `${Date.now()}-${Math.random()}`,
         role: message.role as ChatMessage['role'],
         message_type: message.message_type as ChatMessage['message_type'],
-        content: message.content || '',
+        content: normalizedContent,
         metadata_json: message.metadata_json,
         parent_message_id: message.parent_message_id,
         session_id: message.session_id,
         conversation_id: message.conversation_id,
         created_at: message.created_at || new Date().toISOString()
       };
-      
+
+      // Mirror tool use events into the log panel for visibility
+      try {
+        if (chatMessage.message_type === 'tool_use') {
+          const logEntry: LogEntry = {
+            id: `tool_${chatMessage.id || `${Date.now()}-${Math.random()}`}`,
+            type: 'tool_start',
+            data: {
+              summary: chatMessage.content,
+              tool_name: chatMessage.metadata_json?.tool_name,
+              tool_input: chatMessage.metadata_json?.tool_input,
+              message_id: chatMessage.id,
+            },
+            timestamp: chatMessage.created_at || new Date().toISOString(),
+          };
+          setLogs((prev) => [...prev, logEntry]);
+        }
+      } catch {}
+
       // Clear waiting state when we receive an assistant message
       if (chatMessage.role === 'assistant') {
         setIsWaitingForResponse(false);
@@ -242,14 +315,93 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         activeCheckRef.current = null;
       }
       setMessages(prev => {
-        const exists = prev.some(msg => msg.id === chatMessage.id);
-        if (exists) {
-          return prev;
+        const isAssistantChat = (m: ChatMessage | undefined) => !!m && m.role === 'assistant' && (!m.message_type || m.message_type === 'chat');
+
+        // 1) 병합 우선: assistant 스트리밍 청크는 마지막 메시지와 먼저 병합 시도
+        if (isAssistantChat(chatMessage)) {
+          const last = prev[prev.length - 1];
+          if (isAssistantChat(last)) {
+            const merged: ChatMessage = {
+              ...last!,
+              content: (last!.content || '') + (chatMessage.content || ''),
+              created_at: chatMessage.created_at,
+            } as ChatMessage;
+            return [...prev.slice(0, -1), merged];
+          }
         }
+
+        // 2) 그 외의 경우엔 기존처럼 중복 ID 차단
+        if (prev.some(msg => msg.id === chatMessage.id)) return prev;
+
         return [...prev, chatMessage];
       });
     },
     onStatus: async (status, data) => {
+      // Handle streaming deltas/commits from unified protocol
+      if (status === 'message_delta' && data) {
+        try {
+          const streamId = data.stream_id as string
+          const delta = data.content_delta as string
+          if (!streamId || typeof delta !== 'string') return
+          let entry = streamMapRef.current.get(streamId)
+          if (!entry) {
+            const tempId = `stream_${streamId}_${Date.now()}`
+            entry = { tempId, seq: 0 }
+            streamMapRef.current.set(streamId, entry)
+            const chatMessage: ChatMessage = {
+              id: tempId,
+              role: 'assistant',
+              message_type: 'chat',
+              content: delta,
+              created_at: new Date().toISOString(),
+              metadata_json: null,
+              parent_message_id: null,
+              session_id: undefined,
+              conversation_id: undefined,
+            }
+            setMessages(prev => [...prev, chatMessage])
+          } else {
+            setMessages(prev => {
+              const idx = prev.findIndex(m => m.id === entry!.tempId)
+              if (idx >= 0) {
+                const updated = { ...prev[idx], content: (prev[idx].content || '') + delta }
+                return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)]
+              }
+              return prev
+            })
+          }
+          // receiving data: stop polling
+          if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
+          if (activeCheckRef.current) { clearInterval(activeCheckRef.current); activeCheckRef.current = null }
+          wsHasDeliveredRef.current = true
+        } catch {}
+        return
+      }
+      if (status === 'message_commit' && data) {
+        try {
+          const streamId = data.stream_id as string
+          const messageId = data.message_id as string
+          const createdAt = data.created_at as string
+          const contentFull = data.content_full as string
+          const entry = streamMapRef.current.get(streamId)
+          if (entry) {
+            const tempId = entry.tempId
+            setMessages(prev => {
+              const idx = prev.findIndex(m => m.id === tempId)
+              if (idx >= 0) {
+                const updated: ChatMessage = { ...prev[idx], id: messageId, created_at: createdAt, content: contentFull }
+                return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)]
+              }
+              // If not found, append as new committed message
+              const committed: ChatMessage = { id: messageId, role: 'assistant', message_type: 'chat', content: contentFull, created_at: createdAt, metadata_json: null, parent_message_id: null, session_id: undefined, conversation_id: undefined }
+              return [...prev, committed]
+            })
+            // Close this stream segment; next deltas will create a new bubble
+            streamMapRef.current.delete(streamId)
+          }
+        } catch {}
+        return
+      }
       
       // Handle project status updates
       if (status === 'project_status' && data) {
@@ -278,13 +430,11 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
           completeRequest(data.request_id, isSuccessful, data?.error);
         }
         
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
+        if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        if (fallbackStartTimerRef.current) { clearTimeout(fallbackStartTimerRef.current); fallbackStartTimerRef.current = null; }
 
-        // Final refresh to ensure latest streamed messages are present
-        try { await loadChatHistory(); } catch {}
+        // Final refresh to ensure latest streamed messages are present (silent to avoid flicker)
+        try { await loadChatHistory(false, true); } catch {}
       }
       
       // Handle session start
@@ -295,15 +445,18 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         if (data?.request_id && startRequest) {
           startRequest(data.request_id);
         }
-        // Start fallback polling only if WS is not connected
-        if (!isConnected) {
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-          }
-          pollIntervalRef.current = setInterval(async () => {
-            try { await loadChatHistory(); } catch {}
-          }, 1500);
+        // Fallback polling: 시작을 지연하고, WS가 아직 메시지를 한 번도 전달하지 않았을 때만 동작
+        if (!isConnected && wsHasDeliveredRef.current === false) {
+          if (fallbackStartTimerRef.current) { clearTimeout(fallbackStartTimerRef.current); }
+          fallbackStartTimerRef.current = setTimeout(() => {
+            // 타이머 시점에 다시 조건 확인
+            if (!isConnected && wsHasDeliveredRef.current === false) {
+              if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+              pollIntervalRef.current = setInterval(async () => {
+                try { await loadChatHistory(false, true); } catch {}
+              }, 1500);
+            }
+          }, 1200);
         }
       }
     },
@@ -348,7 +501,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     
     // Also match actual tool command patterns with ** markers
     const toolPatterns = [
-      /\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|Task|WebFetch|WebSearch|MultiEdit|TodoWrite)\*\*/,
+      /\*\*(Read|LS|Glob|Grep|Edit|Write|Bash|Task|WebFetch|WebSearch|MultiEdit|TodoWrite|MCP)\*\*/,
     ];
     
     return toolUsagePatterns.some(pattern => pattern.test(content)) || 
@@ -393,7 +546,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
           
           // Skip redundant chat history refresh during active WebSocket streaming
           if (!isConnected || !wsHasDeliveredRef.current) {
-            try { await loadChatHistory(); } catch {}
+            // Silent로만 보강 동기화하여 오버레이 깜빡임 방지
+            try { await loadChatHistory(false, true); } catch {}
           }
 
           if (sessionStatus.status !== 'active') {
@@ -405,8 +559,8 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
               pollIntervalRef.current = null;
             }
             
-            // Reload messages to get final results
-            loadChatHistory();
+            // Reload messages to get final results (silent)
+            loadChatHistory(false, true);
           }
         }
       } catch (error) {
@@ -416,25 +570,51 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   };
 
   // Load chat history
-  const loadChatHistory = async (force = false) => {
+  const loadChatHistory = async (force = false, silent = false) => {
     try {
-      // Skip loading state update if WebSocket is actively delivering messages (prevents flickering)
-      if (!force && isConnected && wsHasDeliveredRef.current) {
-        // Silent refresh - don't show loading state
-      } else {
-        setIsLoading(true);
+      // Silent 모드이거나, WS가 이미 메시지를 전달 중이면 로딩 표시를 건너뜀(깜빡임 방지)
+      if (!silent) {
+        if (!force && isConnected && wsHasDeliveredRef.current) {
+          // Silent refresh
+        } else {
+          setIsLoading(true);
+        }
       }
       const response = await fetch(`/api/chat/${projectId}/messages`);
       if (response.ok) {
-        const chatMessages: ChatMessage[] = await response.json();
-        setMessages(chatMessages);
+        const raw: ChatMessage[] = await response.json();
+        // Normalize assistant chunk newlines and coalesce consecutive assistant chat chunks for better readability
+        const normalized: ChatMessage[] = [];
+        for (const m of raw) {
+          const mm: ChatMessage = { ...m };
+          if (mm.role === 'assistant' && (!mm.message_type || mm.message_type === 'chat')) {
+            mm.content = (mm.content || '').replace(/\r?\n$/, '');
+            const prev = normalized[normalized.length - 1];
+            if (prev && prev.role === 'assistant' && (!prev.message_type || prev.message_type === 'chat')) {
+              prev.content = (prev.content || '') + (mm.content || '');
+              prev.created_at = mm.created_at || prev.created_at;
+              continue; // skip pushing mm as a new entry
+            }
+          }
+          normalized.push(mm);
+        }
+        // Preserve in-flight streaming bubbles (ids starting with 'stream_') to avoid losing deltas during silent refresh
+        setMessages((prev) => {
+          const inflight = prev.filter((m) => typeof m.id === 'string' && m.id.startsWith('stream_'))
+          if (inflight.length === 0) return normalized
+          return [...normalized, ...inflight]
+        });
+        // 최초 성공 로드 마킹(이후엔 상단 오버레이를 다시 표시하지 않음)
+        historyLoadedOnceRef.current = true;
       }
     } catch (error) {
       console.error('Failed to load chat history:', error);
     } finally {
-      // Only update loading state if we actually set it to true earlier
-      if (force || !isConnected || !wsHasDeliveredRef.current) {
-        setIsLoading(false);
+      // Silent 모드가 아니면서, 실제로 로딩을 켰던 경우에만 끔
+      if (!silent) {
+        if (force || !isConnected || !wsHasDeliveredRef.current) {
+          setIsLoading(false);
+        }
       }
     }
   };
@@ -442,27 +622,26 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
   // Catch-up: when WS connects, silently refresh history once to fill any gaps
   useEffect(() => {
     if (isConnected) {
-      // Silent refresh (force = false) to avoid loading flicker
-      loadChatHistory().catch(() => {});
+      // 첫 연결 직후엔 Silent로만 보강 동기화(오버레이 깜빡임 방지)
+      loadChatHistory(false, true).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected]);
 
-  // Initial load
+  // Initial load (guard against StrictMode double-invoke)
   useEffect(() => {
     if (!projectId) return;
-    
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
+
     let mounted = true;
-    
     const loadData = async () => {
-      if (mounted) {
-        await loadChatHistory(true); // Force initial load
-        await checkActiveSession();
-      }
+      if (!mounted) return;
+      await loadChatHistory(true);
+      await checkActiveSession();
     };
-    
     loadData();
-    
+
     return () => {
       mounted = false;
       if (pollIntervalRef.current) {
@@ -971,7 +1150,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     <div className="flex flex-col h-full bg-white dark:bg-black">
       {/* 메시지와 로그를 함께 표시 */}
       <div className="flex-1 overflow-y-auto px-8 py-3 space-y-2 custom-scrollbar dark:chat-scrollbar">
-        {isLoading && (
+        {isLoading && !historyLoadedOnceRef.current && (
           <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
             <div className="flex flex-col items-center">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>

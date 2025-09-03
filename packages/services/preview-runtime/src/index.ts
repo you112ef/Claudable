@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { previewPorts } from '@repo/config'
-import { wsRegistry } from '@repo/ws'
+import { publish } from '@repo/ws'
 
 type ProcInfo = {
   child: import('node:child_process').ChildProcessWithoutNullStreams
@@ -274,11 +274,11 @@ async function startPreviewInternal(projectId: string, repoPath: string, port?: 
     if (child.exitCode !== null) {
       registry.delete(projectId)
       const error = `Next.js server failed to start (exit code: ${child.exitCode})`
-      try { wsRegistry.broadcast(projectId, { type: 'preview_error', project_id: projectId, message: error } as any) } catch {}
+      try { publish(projectId, { type: 'preview_error', project_id: projectId, message: error } as any) } catch {}
       return { success: false, error }
     }
     
-    try { wsRegistry.broadcast(projectId, { type: 'preview_success', project_id: projectId, url, port: p } as any) } catch {}
+    try { publish(projectId, { type: 'preview_success', project_id: projectId, url, port: p } as any) } catch {}
     
     return {
       success: true,
@@ -289,7 +289,7 @@ async function startPreviewInternal(projectId: string, repoPath: string, port?: 
     }
   } catch (e: any) {
     const error = e?.message || 'Failed to start preview'
-    try { wsRegistry.broadcast(projectId, { type: 'preview_error', project_id: projectId, message: error } as any) } catch {}
+    try { publish(projectId, { type: 'preview_error', project_id: projectId, message: error } as any) } catch {}
     return { success: false, error }
   }
 }
@@ -335,7 +335,7 @@ export async function stopPreview(projectId: string): Promise<void> {
   }
   
   try { 
-    wsRegistry.broadcast(projectId, { 
+    publish(projectId, { 
       type: 'project_status', 
       data: { status: 'preview_stopped', message: 'Preview stopped' } 
     } as any) 
@@ -345,7 +345,7 @@ export async function stopPreview(projectId: string): Promise<void> {
 export async function ensureDependenciesBackground(projectId: string, repoPath: string): Promise<void> {
   try {
     if (!(await shouldInstallDeps(repoPath))) return
-    try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'installing_dependencies', message: 'Installing dependencies...' } } as any) } catch {}
+    try { publish(projectId, { type: 'project_status', data: { status: 'installing_dependencies', message: 'Installing dependencies...' } } as any) } catch {}
     await new Promise<void>((resolve, reject) => {
       const env = { ...process.env }
       const child = spawn('npm', ['install'], { cwd: repoPath, env })
@@ -355,9 +355,9 @@ export async function ensureDependenciesBackground(projectId: string, repoPath: 
       child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err || 'npm install failed'))))
     })
     await saveInstallHash(repoPath)
-    try { wsRegistry.broadcast(projectId, { type: 'project_status', data: { status: 'dependencies_installed', message: 'Dependencies installed' } } as any) } catch {}
+    try { publish(projectId, { type: 'project_status', data: { status: 'dependencies_installed', message: 'Dependencies installed' } } as any) } catch {}
   } catch (e: any) {
-    try { wsRegistry.broadcast(projectId, { type: 'preview_error', project_id: projectId, message: e?.message || 'Dependency install failed' } as any) } catch {}
+    try { publish(projectId, { type: 'preview_error', project_id: projectId, message: e?.message || 'Dependency install failed' } as any) } catch {}
   }
 }
 

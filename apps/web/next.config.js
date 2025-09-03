@@ -1,22 +1,51 @@
 /** @type {import('next').NextConfig} */
 const path = require('path')
 
-// Override Next.js console.log in development to reduce noise
+// Override Next.js console logs in development to reduce API request noise
 if (process.env.NODE_ENV === 'development') {
-  const originalLog = console.log
-  console.log = (...args) => {
-    const message = args.join(' ')
-    // Filter out API request logs and compilation logs
-    if (
-      message.includes('GET /api') ||
-      message.includes('POST /api') ||
-      message.includes('✓ Compiled') ||
-      message.includes('○ Compiling')
-    ) {
-      return
-    }
-    originalLog(...args)
+  const filter = (fn) => (...args) => {
+    try {
+      const message = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+      // Suppress noisy dev logs for API requests and build spam
+      if (
+        message.includes('GET /api') ||
+        message.includes('POST /api') ||
+        message.includes('DELETE /api') ||
+        message.includes('PATCH /api') ||
+        message.includes('PUT /api') ||
+        /\b\d{3}\b in \d+ms/.test(message) || // e.g., "200 in 12ms"
+        message.includes('✓ Compiled') ||
+        message.includes('○ Compiling')
+      ) {
+        return
+      }
+    } catch {}
+    fn(...args)
   }
+  console.log = filter(console.log)
+  console.info = filter(console.info)
+  console.debug = filter(console.debug)
+  // Also filter low-level writes that Next may emit directly
+  const patchWrite = (stream) => {
+    const orig = stream.write.bind(stream)
+    stream.write = (chunk, encoding, cb) => {
+      try {
+        const s = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+        if (
+          /\b(GET|POST|DELETE|PATCH|PUT) \/api\//.test(s) ||
+          /\b\d{3}\b in \d+ms\b/.test(s) ||
+          s.includes('✓ Compiled') ||
+          s.includes('○ Compiling') ||
+          /Compiled in \d+ms/.test(s)
+        ) {
+          return true
+        }
+      } catch {}
+      return orig(chunk, encoding, cb)
+    }
+  }
+  try { patchWrite(process.stdout) } catch {}
+  try { patchWrite(process.stderr) } catch {}
 }
 
 const nextConfig = {

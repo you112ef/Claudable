@@ -18,6 +18,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         if (!projectId) { try { (socket as any).close() } catch {}; return }
         
         wsRegistry.add(projectId, socket as any)
+        try { (wsRegistry as any).flushPending(projectId) } catch {}
         ;(socket as any).on('message', (data: any) => {
           try { 
             // Validate UTF-8 encoding

@@ -999,6 +999,18 @@ export default function ChatPage({ params }: Params) {
     }
     
     setIsRunning(true);
+
+    // Ensure WS is connected for streaming CLIs that start output immediately (Qwen/Gemini)
+    try {
+      const cli = (preferredCli || '').toLowerCase();
+      if ((cli === 'qwen' || cli === 'gemini') && !wsReadyRef.current) {
+        const startedAt = Date.now();
+        // Wait up to 3s for WS to be ready to avoid dropping early chunks
+        while (!wsReadyRef.current && Date.now() - startedAt < 3000) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+    } catch {}
     
     // ★ NEW: request_id 생성
     const requestId = crypto.randomUUID();

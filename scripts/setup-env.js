@@ -8,8 +8,7 @@ const rootDir = path.join(__dirname, '..');
 const envFile = path.join(rootDir, '.env');
 const webEnvFile = path.join(rootDir, 'apps', 'web', '.env.local');
 
-// Default ports
-const DEFAULT_API_PORT = 8080;
+// Default port
 const DEFAULT_WEB_PORT = 3000;
 
 // Robust check: consider a port unavailable if a TCP connection succeeds
@@ -62,25 +61,17 @@ async function setupEnvironment() {
       console.log('  Created data directory');
     }
     
-    // Find available ports
-    const apiPort = await findAvailablePort(DEFAULT_API_PORT);
+    // Find available port for Next.js
     const webPort = await findAvailablePort(DEFAULT_WEB_PORT);
     
-    if (apiPort !== DEFAULT_API_PORT) {
-      console.log(`  API port ${DEFAULT_API_PORT} is busy, using ${apiPort}`);
-    } else {
-      console.log(`  API port: ${apiPort}`);
-    }
-    
     if (webPort !== DEFAULT_WEB_PORT) {
-      console.log(`  Web port ${DEFAULT_WEB_PORT} is busy, using ${webPort}`);
+      console.log(`  Port ${DEFAULT_WEB_PORT} is busy, using ${webPort}`);
     } else {
-      console.log(`  Web port: ${webPort}`);
+      console.log(`  Using port: ${webPort}`);
     }
     
     // Create root .env file
     const envContent = `# Auto-generated environment configuration
-API_PORT=${apiPort}
 WEB_PORT=${webPort}
 DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
 `;
@@ -88,16 +79,20 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
     fs.writeFileSync(envFile, envContent);
     console.log(`  Created .env`);
     
-    // Create or update apps/web/.env.local to match chosen API port
-    const desiredApiBase = `http://localhost:${apiPort}`;
-    const desiredWsBase = `ws://localhost:${apiPort}`;
-
+    // Create or update apps/web/.env.local 
+    // Note: We'll use relative URLs to work with any port
+    // Next.js will automatically use the current host/port
     const writeEnvLocal = (content) => {
       fs.writeFileSync(webEnvFile, content);
     };
 
     if (!fs.existsSync(webEnvFile)) {
-      const webEnvContent = `# Auto-generated environment configuration\nNEXT_PUBLIC_API_BASE=${desiredApiBase}\nNEXT_PUBLIC_WS_BASE=${desiredWsBase}\n`;
+      // Using empty values means the app will use relative URLs (same origin)
+      const webEnvContent = `# Auto-generated environment configuration
+# Leave empty to use relative URLs (works with any port)
+NEXT_PUBLIC_API_BASE=
+NEXT_PUBLIC_WS_BASE=
+`;
       writeEnvLocal(webEnvContent);
       console.log(`  Created apps/web/.env.local`);
     } else {
@@ -115,8 +110,9 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
         }
       };
 
-      setOrAdd('NEXT_PUBLIC_API_BASE', desiredApiBase);
-      setOrAdd('NEXT_PUBLIC_WS_BASE', desiredWsBase);
+      // Set to empty to use relative URLs
+      setOrAdd('NEXT_PUBLIC_API_BASE', '');
+      setOrAdd('NEXT_PUBLIC_WS_BASE', '');
 
       // Deduplicate these keys, keeping the last occurrence
       const keysToDedup = ['NEXT_PUBLIC_API_BASE', 'NEXT_PUBLIC_WS_BASE'];
@@ -137,7 +133,7 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
 
       if (contents !== origContents) {
         writeEnvLocal(contents);
-        console.log('  Updated apps/web/.env.local to match API port');
+        console.log('  Updated apps/web/.env.local to match Web port');
       } else {
         console.log('  apps/web/.env.local already up to date');
       }
@@ -145,14 +141,13 @@ DATABASE_URL=sqlite:///${path.join(rootDir, 'data', 'cc.db')}
     
     console.log('  Environment setup complete!');
     
-    if (apiPort !== DEFAULT_API_PORT || webPort !== DEFAULT_WEB_PORT) {
-      console.log('\n  Note: Using non-default ports');
-      console.log(`     API: http://localhost:${apiPort}`);
+    if (webPort !== DEFAULT_WEB_PORT) {
+      console.log('\n  Note: Using non-default port');
       console.log(`     Web: http://localhost:${webPort}`);
     }
     
-    // Return ports for use in other scripts
-    return { apiPort, webPort };
+    // Return port for use in other scripts
+    return { webPort };
   } catch (error) {
     console.error('\nFailed to setup environment');
     console.error('Error:', error.message);

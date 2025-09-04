@@ -2,7 +2,7 @@
  * Message List Component
  * Displays chat messages
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '@/types/chat';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -45,6 +45,58 @@ function groupMessages(messages: Message[]): Message[][] {
 export function MessageList({ messages, isLoading }: MessageListProps) {
   const messageGroups = groupMessages(messages);
   const [expandedThoughts, setExpandedThoughts] = useState<Set<string>>(new Set());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const lastMessageCountRef = useRef(messages.length);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+
+  // Check if user is near bottom
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setShouldAutoScroll(isNearBottom);
+    }
+  };
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > lastMessageCountRef.current && shouldAutoScroll) {
+      scrollContainerRef.current?.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+    lastMessageCountRef.current = messages.length;
+  }, [messages.length, shouldAutoScroll]);
+
+  // Initial scroll to bottom on mount
+  useEffect(() => {
+    // Immediate scroll
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+    
+    // Delayed scroll to ensure DOM is fully rendered
+    const timer = setTimeout(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, []);
+  
+  // Scroll to bottom when messages first appear
+  useEffect(() => {
+    if (messages.length > 0 && scrollContainerRef.current) {
+      // Use requestAnimationFrame for better timing
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+      });
+    }
+  }, [messages.length === 0, messages.length > 0]);
 
   const toggleThought = (messageId: string) => {
     setExpandedThoughts(prev => {
@@ -59,163 +111,222 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
-      <AnimatePresence initial={false}>
-        {messageGroups.map((group, groupIndex) => {
-          const firstMessage = group[0];
-          const isUser = firstMessage.role === 'user';
+    <div className="relative flex-1 overflow-hidden">
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto pt-6 scroll-smooth custom-scrollbar chat-scrollbar"
+      >
+        <div className="px-6 pb-6">
           
-          return (
-            <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`} key={`group-${groupIndex}-${firstMessage.id}`}>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-              >
-              <div
-                className={`max-w-[70%] rounded-lg px-4 py-2 space-y-2 ${
-                  isUser
-                    ? 'bg-blue-500 text-white'
-                    : firstMessage.message_type === 'error'
-                    ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                    : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
-                }`}
-              >
-                {group.map((message, messageIndex) => {
-                  // Check if this message has thinking data
-                  const hasThinking = message.metadata_json?.thinking_content || message.metadata_json?.thinking_duration;
-                  const thinkingDuration = message.metadata_json?.thinking_duration || 10; // Default to 10 seconds
-                  const thinkingContent = message.metadata_json?.thinking_content || "Processing request...";
-                  const isThoughtExpanded = expandedThoughts.has(message.id);
-                  
-                  return (
-                  <div key={message.id || messageIndex}>
-                    {/* Thinking UI for assistant messages */}
-                    {!isUser && hasThinking && messageIndex === 0 && (
-                      <div className="mb-2">
-                        <button
-                          onClick={() => toggleThought(message.id)}
-                          className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                        >
-                          <svg 
-                            className={`w-3 h-3 transition-transform ${isThoughtExpanded ? 'rotate-90' : ''}`} 
-                            fill="none" 
-                            viewBox="0 0 24 24" 
-                            stroke="currentColor"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                          <span className="font-normal">Thought for {thinkingDuration} seconds</span>
-                        </button>
-                        
-                        {isThoughtExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.2 }}
-                            style={{ overflow: 'hidden' }}
-                          >
-                            <div className="mt-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
-                              <div className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
-                                {thinkingContent}
-                              </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {message.message_type === 'error' && messageIndex === 0 && (
-                      <div className="flex items-center gap-2 mb-1">
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span className="font-semibold text-sm">Error</span>
-                      </div>
-                    )}
-                    
-                    {message.message_type === 'tool_use' ? (
-                      <div className="text-sm opacity-75 italic mb-1">
-                        {message.content}
-                      </div>
-                    ) : (
-                      <div className="whitespace-pre-wrap break-words">
-                        {message.content}
-                        {/* Attachments (thumbnails) */}
-                        {message.metadata_json && Array.isArray((message as any).metadata_json.attachments) && (
-                          <div className="mt-2 grid grid-cols-3 gap-2">
-                            {(message as any).metadata_json.attachments.map((att: any, idx: number) => {
-                              const rawUrl = att.url as string;
-                              const fullUrl = rawUrl?.startsWith('http')
-                                ? rawUrl
-                                : `${rawUrl || ''}`;
-                              const name = att.name || 'image';
-                              return (
-                                <div key={idx} className="w-20 h-20 overflow-hidden rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
-                                  {fullUrl ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={fullUrl} alt={name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-xs opacity-60">img</div>
+          <div className="space-y-4">
+            <AnimatePresence initial={false}>
+              {messageGroups.map((group, groupIndex) => {
+                const firstMessage = group[0];
+                const isUser = firstMessage.role === 'user';
+                
+                return (
+                  <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`} key={`group-${groupIndex}-${firstMessage.id}`}>
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                      transition={{ 
+                        duration: 0.4,
+                        ease: [0.4, 0.0, 0.2, 1],
+                        opacity: { duration: 0.3 },
+                        scale: { duration: 0.3 }
+                      }}
+                    >
+                      <div
+                        className={`max-w-[70%] rounded-lg px-4 py-2 space-y-2 ${
+                          isUser
+                            ? 'bg-blue-500 text-white'
+                            : firstMessage.message_type === 'error'
+                            ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                        }`}
+                      >
+                        {group.map((message, messageIndex) => {
+                          // Check if this message has thinking data
+                          const hasThinking = message.metadata_json?.thinking_content || message.metadata_json?.thinking_duration;
+                          const thinkingDuration = message.metadata_json?.thinking_duration || 10; // Default to 10 seconds
+                          const thinkingContent = message.metadata_json?.thinking_content || "Processing request...";
+                          const isThoughtExpanded = expandedThoughts.has(message.id);
+                          
+                          return (
+                            <div key={message.id || messageIndex}>
+                              {/* Thinking UI for assistant messages */}
+                              {!isUser && hasThinking && messageIndex === 0 && (
+                                <div className="mb-2">
+                                  <button
+                                    onClick={() => toggleThought(message.id)}
+                                    className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                                  >
+                                    <svg 
+                                      className={`w-3 h-3 transition-transform ${isThoughtExpanded ? 'rotate-90' : ''}`} 
+                                      fill="none" 
+                                      viewBox="0 0 24 24" 
+                                      stroke="currentColor"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                    <span className="font-normal">Thought for {thinkingDuration} seconds</span>
+                                  </button>
+                                  
+                                  {isThoughtExpanded && (
+                                    <motion.div
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: "auto", opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      transition={{ 
+                                        duration: 0.3,
+                                        ease: [0.4, 0.0, 0.2, 1]
+                                      }}
+                                      style={{ overflow: 'hidden' }}
+                                    >
+                                      <div className="mt-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+                                        <div className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
+                                          {thinkingContent}
+                                        </div>
+                                      </div>
+                                    </motion.div>
                                   )}
                                 </div>
-                              );
-                            })}
+                              )}
+                              
+                              {message.message_type === 'error' && messageIndex === 0 && (
+                                <div className="flex items-center gap-2 mb-1">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                                          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  <span className="font-semibold text-sm">Error</span>
+                                </div>
+                              )}
+                              
+                              {message.message_type === 'tool_use' ? (
+                                <div className="text-sm opacity-75 italic mb-1">
+                                  {message.content}
+                                </div>
+                              ) : (
+                                <div className="whitespace-pre-wrap break-words">
+                                  {message.content}
+                                  {/* Attachments (thumbnails) */}
+                                  {message.metadata_json && Array.isArray((message as any).metadata_json.attachments) && (
+                                    <div className="mt-2 grid grid-cols-3 gap-2">
+                                      {(message as any).metadata_json.attachments.map((att: any, idx: number) => {
+                                        const rawUrl = att.url as string;
+                                        const fullUrl = rawUrl?.startsWith('http')
+                                          ? rawUrl
+                                          : `${rawUrl || ''}`;
+                                        const name = att.name || 'image';
+                                        return (
+                                          <div key={idx} className="w-20 h-20 overflow-hidden rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+                                            {fullUrl ? (
+                                              // eslint-disable-next-line @next/next/no-img-element
+                                              <img src={fullUrl} alt={name} className="w-full h-full object-cover" />
+                                            ) : (
+                                              <div className="w-full h-full flex items-center justify-center text-xs opacity-60">img</div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        
+                        {firstMessage.cli_source && (
+                          <div className="mt-2 text-xs opacity-70">
+                            via {firstMessage.cli_source}
                           </div>
                         )}
+                        
+                        <div className="mt-1 text-xs opacity-50">
+                          {new Date(group[group.length - 1].created_at).toLocaleTimeString()}
+                        </div>
                       </div>
-                    )}
+                    </motion.div>
                   </div>
-                  );
-                })}
-                
-                {firstMessage.cli_source && (
-                  <div className="mt-2 text-xs opacity-70">
-                    via {firstMessage.cli_source}
+                );
+              })}
+            </AnimatePresence>
+            
+            {isLoading && (
+              <div className="flex justify-start">
+                <motion.div 
+                  initial={{ opacity: 0, y: 5 }} 
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                >
+                  <div className="space-y-2">
+                    {/* Thinking indicator */}
+                    <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span className="font-normal">Thinking...</span>
+                    </div>
+                    
+                    {/* Loading dots */}
+                    <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
+                      <div className="flex space-x-1.5">
+                        <motion.div 
+                          className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full"
+                          animate={{ 
+                            y: [0, -8, 0],
+                            opacity: [0.5, 1, 0.5]
+                          }}
+                          transition={{
+                            duration: 1.4,
+                            ease: "easeInOut",
+                            times: [0, 0.5, 1],
+                            repeat: Infinity,
+                            delay: 0
+                          }}
+                        />
+                        <motion.div 
+                          className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full"
+                          animate={{ 
+                            y: [0, -8, 0],
+                            opacity: [0.5, 1, 0.5]
+                          }}
+                          transition={{
+                            duration: 1.4,
+                            ease: "easeInOut",
+                            times: [0, 0.5, 1],
+                            repeat: Infinity,
+                            delay: 0.2
+                          }}
+                        />
+                        <motion.div 
+                          className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full"
+                          animate={{ 
+                            y: [0, -8, 0],
+                            opacity: [0.5, 1, 0.5]
+                          }}
+                          transition={{
+                            duration: 1.4,
+                            ease: "easeInOut",
+                            times: [0, 0.5, 1],
+                            repeat: Infinity,
+                            delay: 0.4
+                          }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                )}
-                
-                <div className="mt-1 text-xs opacity-50">
-                  {new Date(group[group.length - 1].created_at).toLocaleTimeString()}
-                </div>
+                </motion.div>
               </div>
-              </motion.div>
-            </div>
-          );
-        })}
-      </AnimatePresence>
-      
-      {isLoading && (
-        <div className="flex justify-start">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <div className="space-y-2">
-              {/* Thinking indicator */}
-              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span className="font-normal">Thinking...</span>
-              </div>
-              
-              {/* Loading dots */}
-              <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-2">
-                <div className="flex space-x-2">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
-                       style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
-                       style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
-                       style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
-            </div>
-          </motion.div>
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

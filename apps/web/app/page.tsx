@@ -547,6 +547,11 @@ export default function HomePage() {
         await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
 
+      // Store initial prompt for immediate display in chat page
+      if (prompt.trim()) {
+        sessionStorage.setItem(`project_${project.id}_initialPrompt`, prompt.trim());
+      }
+      
       // Navigate to chat page with model and CLI parameters
       const params = new URLSearchParams();
       if (selectedAssistant) params.set('cli', selectedAssistant);

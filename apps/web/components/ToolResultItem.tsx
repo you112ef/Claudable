@@ -66,9 +66,9 @@ const ToolResultItem: React.FC<ToolResultItemProps> = ({ action, filePath, conte
   };
 
   return (
-    <div className="mb-2">
+    <div className="mb-4">
       <div 
-        className="flex h-6 items-center gap-1.5 whitespace-nowrap text-base font-medium md:text-sm cursor-pointer group"
+        className="flex h-5 items-center gap-1.5 whitespace-nowrap text-base font-medium md:text-sm cursor-pointer group"
         onClick={() => content && setIsExpanded(!isExpanded)}
       >
         <div className="mb-px mr-1 flex shrink-0 items-center">

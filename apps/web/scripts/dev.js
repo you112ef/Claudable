@@ -2,6 +2,11 @@
 
 const { spawn } = require('child_process');
 
+// Parse command line arguments for port
+const args = process.argv.slice(2);
+const portIndex = args.findIndex(arg => arg === '--port' || arg === '-p');
+const port = portIndex !== -1 && args[portIndex + 1] ? parseInt(args[portIndex + 1]) : (process.env.WEB_PORT || 3000);
+
 // Flag to ensure browser opens only once
 let browserOpened = false;
 
@@ -16,24 +21,31 @@ const openBrowserOnce = () => {
   // Wait for server to be ready, then open browser
   setTimeout(async () => {
     try {
-      const port = process.env.WEB_PORT || 3000;
       const url = `http://localhost:${port}`;
       // Dynamic import for ESM module
       const open = (await import('open')).default;
       await open(url);
       console.log(`\n🚀 Browser opened at ${url}`);
     } catch (error) {
-      const port = process.env.WEB_PORT || 3000;
       console.log(`\n⚠️  Could not open browser automatically. Please visit http://localhost:${port} manually.`);
       console.log('Error:', error.message);
     }
   }, 4000); // 4 second delay to ensure server is ready
 };
 
-// Start Next.js dev server
-const next = spawn('npx', ['next', 'dev'], {
+// Start Next.js dev server with the specified port
+const nextArgs = ['next', 'dev'];
+if (port) {
+  nextArgs.push('--port', port.toString());
+}
+
+const next = spawn('npx', nextArgs, {
   stdio: 'inherit',
-  shell: true
+  shell: true,
+  env: {
+    ...process.env,
+    PORT: port.toString()
+  }
 });
 
 // Open browser once after server starts

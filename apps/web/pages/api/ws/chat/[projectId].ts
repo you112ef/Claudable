@@ -6,64 +6,86 @@ import { stopPreview } from '@repo/services/preview-runtime'
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const anyRes = res as any
-  if (!anyRes.socket.server.__WSS__) {
-    const wss = new WebSocketServer({ server: anyRes.socket.server })
-
-    // Prevent uncaught exceptions from bubbling due to protocol errors
-    wss.on('error', (err) => {
-      try { console.error('[WS(api)] Server error:', err) } catch {}
+  
+  // Initialize WebSocket server once per server instance
+  if (!anyRes.socket.server.wss) {
+    const wss = new WebSocketServer({ 
+      server: anyRes.socket.server,
+      perMessageDeflate: false, // Disable compression for simplicity
     })
 
     wss.on('connection', (socket, request) => {
-      try {
-        const parsed = url.parse(request.url || '', true)
-        const parts = (parsed.pathname || '').split('/').filter(Boolean)
-        // Expect path like /api/ws/chat/{projectId}
-        const idx = parts.indexOf('chat')
-        const projectId = idx >= 0 ? parts[idx + 1] : null
-        if (!projectId) { try { (socket as any).close(1002, 'Protocol error') } catch {}; return }
-        
-        wsRegistry.add(projectId, socket as any)
-        try { (wsRegistry as any).flushPending(projectId) } catch {}
-        ;(socket as any).on('message', (data: any) => {
-          try { 
-            // Validate UTF-8 encoding
-            const message = Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
-            if (message === 'ping') (socket as any).send('pong') 
-          } catch (error) {
-            // Silent failure - invalid message format
+      const projectId = extractProjectId(request.url)
+      
+      if (!projectId) {
+        socket.close(1002, 'Invalid project ID')
+        return
+      }
+
+      // Register socket
+      wsRegistry.add(projectId, socket as any)
+      
+      // Handle ping/pong
+      socket.on('message', (data) => {
+        try {
+          const message = data.toString('utf8')
+          if (message === 'ping') {
+            socket.send('pong')
           }
-        })
-        const onGone = async () => {
-          wsRegistry.remove(projectId, socket as any)
-          const remainingConnections = wsRegistry.count(projectId)
-          
-          // If no more connections for this project, stop its preview server
-          if (remainingConnections === 0) {
-            try {
-              await stopPreview(projectId)
-            } catch (e) {
-              // Silent failure - preview may not be running
-            }
-          }
+        } catch {
+          // Ignore invalid messages
         }
-        socket.on('close', (code: number, reason: Buffer) => {
-          try {
-            const msg = reason ? reason.toString('utf8') : ''
-            console.log(`[WS(api)] Closed: code=${code} reason=${msg}`)
-          } catch {}
-          onGone()
-        })
-        socket.on('error', (err) => {
-          try { console.error('[WS(api)] Socket error:', err) } catch {}
-          onGone()
-        })
-      } catch {}
+      })
+
+      // Cleanup on disconnect
+      socket.on('close', async () => {
+        wsRegistry.remove(projectId, socket as any)
+        
+        // Stop preview if no more connections
+        if (wsRegistry.count(projectId) === 0) {
+          await stopPreview(projectId).catch(() => {})
+        }
+      })
+
+      // Handle errors gracefully
+      socket.on('error', () => {
+        wsRegistry.remove(projectId, socket as any)
+      })
     })
-    anyRes.socket.server.__WSS__ = wss
+
+    // Handle server errors
+    wss.on('error', (err) => {
+      console.error('[WebSocket] Server error:', err)
+    })
+
+    anyRes.socket.server.wss = wss
   }
-  // For GET requests used to "prime" the WS server, simply return OK
-  res.status(200).end('ok')
+  
+  // Return OK for HTTP GET requests (used to initialize the WebSocket endpoint)
+  res.status(200).json({ status: 'ok' })
 }
 
-export const config = { api: { bodyParser: false } }
+// Extract project ID from URL path
+function extractProjectId(urlPath?: string): string | null {
+  if (!urlPath) return null
+  
+  try {
+    const parsed = url.parse(urlPath, true)
+    const parts = (parsed.pathname || '').split('/').filter(Boolean)
+    const chatIndex = parts.indexOf('chat')
+    
+    if (chatIndex >= 0 && parts[chatIndex + 1]) {
+      return parts[chatIndex + 1]
+    }
+  } catch {
+    // Invalid URL
+  }
+  
+  return null
+}
+
+export const config = { 
+  api: { 
+    bodyParser: false 
+  } 
+}

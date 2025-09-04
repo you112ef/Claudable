@@ -146,6 +146,66 @@ async function saveInstallHash(repoPath: string) {
   await fsp.writeFile(installHashPath(repoPath), h)
 }
 
+// Clean temporary npm directories that might cause ENOTEMPTY errors
+async function cleanTempDirectories(repoPath: string): Promise<void> {
+  try {
+    const entries = await fsp.readdir(repoPath, { withFileTypes: true })
+    const tempDirPattern = /^\.(.*?)-([\w\d]+)$/  // Matches .package-name-randomhash
+    
+    for (const entry of entries) {
+      if (entry.isDirectory() && tempDirPattern.test(entry.name)) {
+        const tempPath = path.join(repoPath, entry.name)
+        await fsp.rm(tempPath, { recursive: true, force: true }).catch(() => {})
+      }
+    }
+  } catch {
+    // Ignore errors - this is just cleanup
+  }
+}
+
+// Clean node_modules directory completely
+async function cleanNodeModules(repoPath: string): Promise<void> {
+  const nodeModulesPath = path.join(repoPath, 'node_modules')
+  const lockPath = path.join(repoPath, 'package-lock.json')
+  
+  if (fs.existsSync(nodeModulesPath)) {
+    await fsp.rm(nodeModulesPath, { recursive: true, force: true })
+  }
+  
+  // Also remove lock file for clean slate
+  if (fs.existsSync(lockPath)) {
+    await fsp.rm(lockPath, { force: true })
+  }
+}
+
+// Run npm install with proper error handling
+async function runNpmInstall(repoPath: string, env: NodeJS.ProcessEnv): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // Use npm ci if package-lock exists, otherwise npm install
+    const lockExists = fs.existsSync(path.join(repoPath, 'package-lock.json'))
+    const args = lockExists ? ['ci'] : ['install', '--legacy-peer-deps']
+    
+    const child = spawn('npm', args, { cwd: repoPath, env })
+    let stderr = ''
+    
+    child.stderr?.on('data', (d) => {
+      stderr += String(d)
+    })
+    
+    child.on('error', (error) => {
+      reject(new Error(`npm process error: ${error.message}`))
+    })
+    
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(stderr || `npm ${args[0]} failed with code ${code}`))
+      }
+    })
+  })
+}
+
 async function normalizeToNpm(repoPath: string): Promise<void> {
   const pnpmLock = path.join(repoPath, 'pnpm-lock.yaml');
   const yarnLock = path.join(repoPath, 'yarn.lock');
@@ -178,7 +238,21 @@ export async function startPreview(projectId: string, repoPath: string, port?: n
   // 🔒 Concurrency Control: Check if already starting
   const existingStart = startingRegistry.get(projectId)
   if (existingStart) {
+    console.log(`[Preview] Already starting preview for project ${projectId}, returning existing promise`)
     return existingStart
+  }
+
+  // Check if already running
+  const existing = registry.get(projectId)
+  if (existing) {
+    console.log(`[Preview] Preview already running for project ${projectId} on port ${existing.port}`)
+    return { 
+      success: true, 
+      port: existing.port, 
+      url: existing.url,
+      process_name: `next-dev-${projectId}`,
+      process_id: existing.child.pid
+    }
   }
 
   // 🔒 Create new start promise and register it
@@ -216,24 +290,38 @@ async function startPreviewInternal(projectId: string, repoPath: string, port?: 
       BROWSER: 'none',
     }
 
+    // Stop any existing preview first to release file locks
+    await stopPreview(projectId)
+    
     // Normalize repository to npm to avoid mixed package managers
     await normalizeToNpm(repoPath)
 
     if (await shouldInstallDeps(repoPath)) {
-      console.log(`Installing dependencies for project ${projectId} with npm...`)
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn('npm', ['install'], { cwd: repoPath, env })
-        let err = ''
-        child.stderr?.on('data', (d) => (err += String(d)))
-        child.on('error', (error) => {
-          reject(error)
-        })
-        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err || 'npm install failed'))))
-      })
-      await saveInstallHash(repoPath)
-      console.log(`Dependencies installed successfully for project ${projectId} using npm`)
+      console.log(`Installing dependencies for project ${projectId}...`)
+      
+      // Clean any leftover temp directories BEFORE starting install
+      await cleanTempDirectories(repoPath)
+      
+      try {
+        await runNpmInstall(repoPath, env)
+        await saveInstallHash(repoPath)
+        console.log(`Dependencies installed successfully for project ${projectId}`)
+      } catch (error: any) {
+        // Only handle specific npm errors, not general failures
+        if (error.message?.includes('ENOTEMPTY') || error.message?.includes('EEXIST')) {
+          console.log(`Cleaning corrupted node_modules and retrying...`)
+          await cleanNodeModules(repoPath)
+          
+          // Single retry after cleanup
+          await runNpmInstall(repoPath, env)
+          await saveInstallHash(repoPath)
+          console.log(`Dependencies installed successfully after cleanup`)
+        } else {
+          throw error // Re-throw other errors
+        }
+      }
     } else {
-      console.log(`Dependencies already up to date for project ${projectId}, skipping npm install`)
+      console.log(`Dependencies up to date for project ${projectId}`)
     }
 
     const child = spawn('npm', ['run', 'dev', '--', '-p', String(p)], { 

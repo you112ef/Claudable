@@ -2,9 +2,7 @@
 import React, { useEffect, useState, useRef, ReactElement, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
-import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { Brain } from 'lucide-react';
 import ToolResultItem from './ToolResultItem';
 import ThinkingSection from './chat/ThinkingSection';
 
@@ -58,39 +56,130 @@ const ToolMessage = ({ content, metadata }: { content: unknown; metadata?: { too
       .replace(/[🔧⚡🔍📖✏️📁🌐🔎🤖📝🎯✅📓⚙️🧠]/g, '')
       .trim();
     
-    // Check for CLI adapter "Using tool:" pattern first
-    const cliToolMatch = processedContent.match(/^Using tool:\s*(\w+)\s*(.*)$/);
-    if (cliToolMatch) {
-      const toolName = cliToolMatch[1];
-      const toolArg = cliToolMatch[2].trim();
-      
-      switch (toolName) {
-        case 'exec_command':
-          action = 'Executed';
-          filePath = toolArg;
-          cleanContent = `${toolArg}`;
-          break;
-        case 'read':
-        case 'read_file':
-          action = 'Read';
-          filePath = toolArg;
-          cleanContent = undefined;
-          break;
-        case 'write':
-        case 'write_file':
-          action = 'Created';
-          filePath = toolArg;
-          cleanContent = undefined;
-          break;
-        case 'edit':
-          action = 'Edited';
-          filePath = toolArg;
-          cleanContent = undefined;
-          break;
-        default:
-          action = 'Executed';
-          filePath = toolArg;
-          cleanContent = `${toolName} ${toolArg}`;
+    // Check for various Codex bash command patterns
+    // Pattern 1: bash -lc sed -n 'line_range' file
+    const sedReadMatch = processedContent.match(/bash\s+-l[c]?\s+sed\s+-n\s+'[\d,]+p'\s+(.+)/);
+    if (sedReadMatch) {
+      action = 'Read';
+      filePath = sedReadMatch[1].replace(/['"]/g, '').trim();
+      cleanContent = undefined;
+    }
+    // Pattern 2: bash -lc rg --files (for listing files)
+    else if (processedContent.match(/bash\s+-l[c]?\s+rg\s+--files/)) {
+      const rgMatch = processedContent.match(/bash\s+-l[c]?\s+rg\s+--files\s*(.*)$/);
+      action = 'Searched';
+      filePath = rgMatch && rgMatch[1] ? rgMatch[1].trim() : 'files';
+      cleanContent = undefined;
+    }
+    // Pattern 3: bash -lc ls commands
+    else if (processedContent.match(/bash\s+-l[c]?\s+ls/)) {
+      const lsMatch = processedContent.match(/bash\s+-l[c]?\s+ls\s*(.*)$/);
+      action = 'Searched';
+      filePath = lsMatch && lsMatch[1] ? lsMatch[1].trim() : '.';
+      cleanContent = undefined;
+    }
+    // Pattern 4: bash -lc cat/head/tail for reading files
+    else if (processedContent.match(/bash\s+-l[c]?\s+(cat|head|tail)\s+/)) {
+      const readMatch = processedContent.match(/bash\s+-l[c]?\s+(cat|head|tail)\s+(.+)$/);
+      if (readMatch) {
+        action = 'Read';
+        filePath = readMatch[2].replace(/['"]/g, '').trim();
+        cleanContent = undefined;
+      }
+    }
+    // Pattern 5: bash -lc "complex commands in quotes"
+    else if (processedContent.match(/bash\s+-l[c]?\s+["'].*sed\s+-n.*["']/)) {
+      const quotedMatch = processedContent.match(/sed\s+-n\s+'[\d,]+p'\s+([^'"]+)/);
+      if (quotedMatch) {
+        action = 'Read';
+        filePath = quotedMatch[1].trim();
+        cleanContent = undefined;
+      }
+    }
+    // Check for "Using tool: **ToolName**" pattern (Codex format)
+    else if (processedContent.match(/^Using tool:\s*\*\*(\w+)\*\*\s*`?([^`]*)`?/)) {
+      const match = processedContent.match(/^Using tool:\s*\*\*(\w+)\*\*\s*`?([^`]*)`?/);
+      if (match) {
+        const toolName = match[1];
+        const toolArg = match[2].trim();
+        
+        // Handle Bash commands with sed for reading
+        if (toolName === 'Bash' && toolArg.includes('sed -n')) {
+          const fileMatch = toolArg.match(/sed\s+-n\s+'[\d,]+p'\s+(.+)/);
+          if (fileMatch) {
+            action = 'Read';
+            filePath = fileMatch[1].replace(/['"]/g, '').trim();
+            cleanContent = undefined;
+          } else {
+            action = 'Executed';
+            filePath = toolArg;
+            cleanContent = undefined;
+          }
+        } else {
+          switch (toolName) {
+            case 'Read':
+              action = 'Read';
+              filePath = toolArg;
+              cleanContent = undefined;
+              break;
+            case 'Edit':
+              action = 'Edited';
+              filePath = toolArg;
+              cleanContent = undefined;
+              break;
+            case 'Write':
+              action = 'Created';
+              filePath = toolArg;
+              cleanContent = undefined;
+              break;
+            case 'Bash':
+              action = 'Executed';
+              filePath = toolArg;
+              cleanContent = undefined;
+              break;
+            default:
+              action = 'Executed';
+              filePath = toolArg;
+              cleanContent = undefined;
+          }
+        }
+      }
+    }
+    // Check for CLI adapter "Using tool:" pattern (without asterisks)
+    else if (processedContent.match(/^Using tool:\s*(\w+)\s*(.*)$/)) {
+      const cliToolMatch = processedContent.match(/^Using tool:\s*(\w+)\s*(.*)$/);
+      if (cliToolMatch) {
+        const toolName = cliToolMatch[1];
+        const toolArg = cliToolMatch[2].trim();
+        
+        switch (toolName) {
+          case 'exec_command':
+            action = 'Executed';
+            filePath = toolArg;
+            cleanContent = `${toolArg}`;
+            break;
+          case 'read':
+          case 'read_file':
+            action = 'Read';
+            filePath = toolArg;
+            cleanContent = undefined;
+            break;
+          case 'write':
+          case 'write_file':
+            action = 'Created';
+            filePath = toolArg;
+            cleanContent = undefined;
+            break;
+          case 'edit':
+            action = 'Edited';
+            filePath = toolArg;
+            cleanContent = undefined;
+            break;
+          default:
+            action = 'Executed';
+            filePath = toolArg;
+            cleanContent = `${toolName} ${toolArg}`;
+        }
       }
     } 
     // Check for **Tool** pattern with path/command
@@ -237,15 +326,24 @@ interface ChatLogProps {
   completeRequest?: (requestId: string, isSuccessful: boolean, errorMessage?: string) => void;
   onWebSocketConnect?: () => void;
   onWebSocketDisconnect?: () => void;
+  initialUserMessage?: string | null;
+  showAgentThinking?: boolean;
+  buildError?: string | null;
+  onSubmitMessage?: (message: string) => void;
 }
 
-export default function ChatLog({ projectId, onSessionStatusChange, onProjectStatusUpdate, startRequest, completeRequest, onWebSocketConnect, onWebSocketDisconnect }: ChatLogProps) {
+export default function ChatLog({ projectId, onSessionStatusChange, onProjectStatusUpdate, startRequest, completeRequest, onWebSocketConnect, onWebSocketDisconnect, initialUserMessage, showAgentThinking, buildError, onSubmitMessage }: ChatLogProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [lastBuildError, setLastBuildError] = useState<string | null>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const activeCheckRef = useRef<NodeJS.Timeout | null>(null);
   // Track whether current WS connection has actually delivered at least one message
@@ -492,6 +590,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
       /^Applying code changes/,          // "Applying code changes"  
       /^Reading.*file/,                  // Various read patterns
       /^Writing.*file/,                  // Various write patterns
+      /bash\s+-l[c]?\s+(sed|cat|head|tail|ls|rg)/,  // Codex bash patterns
     ];
     
     // Also match actual tool command patterns with ** markers
@@ -519,7 +618,10 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         }
       }
     } catch (error) {
-      console.error('Failed to check active session:', error);
+      // Silently ignore errors (e.g., during unmount)
+      if (!error.message?.includes('Failed to fetch')) {
+        console.error('Failed to check active session:', error);
+      }
     }
     setActiveSession(null);
     onSessionStatusChange?.(false);
@@ -576,6 +678,7 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
         }
       }
       const response = await fetch(`/api/chat/${projectId}/messages`);
+      if (!response.ok) return; // Fail silently on error
       if (response.ok) {
         const raw: ChatMessage[] = await response.json();
         // Normalize assistant chunk newlines and coalesce consecutive assistant chat chunks for better readability
@@ -629,16 +732,26 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     if (initialLoadDoneRef.current) return;
     initialLoadDoneRef.current = true;
 
+    const abortController = new AbortController();
     let mounted = true;
+    
     const loadData = async () => {
       if (!mounted) return;
-      await loadChatHistory(true);
-      await checkActiveSession();
+      try {
+        await loadChatHistory(true);
+        await checkActiveSession();
+      } catch (error) {
+        // Ignore abort errors
+        if (!abortController.signal.aborted && error.name !== 'AbortError') {
+          console.error('Error loading initial data:', error);
+        }
+      }
     };
     loadData();
 
     return () => {
       mounted = false;
+      abortController.abort(); // Cancel any pending fetches
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -981,6 +1094,22 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
 
   // ✅ Track the last message ID to only animate new messages
   const [lastMessageId, setLastMessageId] = useState<string>('');
+  
+  // Show error modal when build error is detected
+  useEffect(() => {
+    if (buildError && buildError !== lastBuildError) {
+      setShowErrorModal(true);
+      setLastBuildError(buildError);
+    }
+  }, [buildError, lastBuildError]);
+  
+  const handleFixError = () => {
+    if (buildError && onSubmitMessage) {
+      const errorMessage = `Fix this Next.js build error:\n\n\`\`\`\n${buildError}\n\`\`\``;
+      onSubmitMessage(errorMessage);
+      setShowErrorModal(false);
+    }
+  };
   
   useEffect(() => {
     if (displayableMessages.length > 0) {
@@ -1342,15 +1471,28 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     if (isWaitingForResponse) {
       items.push(
         <div key="waiting" className="mb-4 w-full">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
-              <span className="animate-pulse">...</span>
+          <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+            <div className="flex gap-1 text-xl">
+              <motion.span
+                animate={{ opacity: [0.3, 1, 0.3] }}
+                transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+              >
+                •
+              </motion.span>
+              <motion.span
+                animate={{ opacity: [0.3, 1, 0.3] }}
+                transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
+              >
+                •
+              </motion.span>
+              <motion.span
+                animate={{ opacity: [0.3, 1, 0.3] }}
+                transition={{ duration: 1.5, repeat: Infinity, delay: 0.6 }}
+              >
+                •
+              </motion.span>
             </div>
-          </motion.div>
+          </div>
         </div>
       );
     }
@@ -1358,230 +1500,278 @@ export default function ChatLog({ projectId, onSessionStatusChange, onProjectSta
     return items;
   }, [isLoading, displayableMessages, logs, isWaitingForResponse, lastMessageId]);
 
-  // Stable virtual items to avoid re-mount flicker
-  type VirtualItem =
-    | { kind: 'loading'; key: 'loading' }
-    | { kind: 'empty'; key: 'empty' }
-    | { kind: 'waiting'; key: 'waiting' }
-    | { kind: 'message'; key: string; message: ChatMessage }
-    | { kind: 'log'; key: string; log: LogEntry };
+  // Filter logs to display
+  const displayableLogs = useMemo(() => {
+    return logs.filter(log => !['system'].includes(log.type));
+  }, [logs]);
 
-  const virtualItems: VirtualItem[] = useMemo(() => {
-    const items: VirtualItem[] = [];
-    if (isLoading && !historyLoadedOnceRef.current) {
-      items.push({ kind: 'loading', key: 'loading' });
-      return items;
+  const scrollToBottom = (force = false) => {
+    if (!force && isUserScrolling) return;
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Check if user is near bottom of scroll
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setIsUserScrolling(!isNearBottom);
     }
-    if (!isLoading && displayableMessages.length === 0 && logs.length === 0) {
-      items.push({ kind: 'empty', key: 'empty' });
-    }
-    for (const m of displayableMessages) items.push({ kind: 'message', key: `m:${m.id}`, message: m });
-    for (const l of logs.filter(l => !['system'].includes(l.type))) items.push({ kind: 'log', key: `l:${l.id}`, log: l });
-    if (isWaitingForResponse) items.push({ kind: 'waiting', key: 'waiting' });
-    return items;
-  }, [isLoading, displayableMessages, logs, isWaitingForResponse]);
+  };
 
-  // Auto-scroll state and controls
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const [pendingNew, setPendingNew] = useState(0);
-
-  const scrollToBottomSmooth = useCallback(() => {
-    const count = virtualItems.length;
-    if (count > 0) {
-      virtuosoRef.current?.scrollToIndex({ index: count - 1, behavior: 'smooth' });
-      setPendingNew(0);
-    }
-  }, [virtualItems.length]);
-
-  // When list grows: if at bottom, follow; if scrolled up, increase pending count
-  const prevLengthRef = useRef(virtualItems.length);
+  // Auto-scroll when new messages arrive (only if user is at bottom)
   useEffect(() => {
-    const prev = prevLengthRef.current;
-    const curr = virtualItems.length;
-    if (curr > prev) {
-      // New items appended
-      if (isAtBottom) {
-        // Smooth scroll to bottom
-        scrollToBottomSmooth();
-      } else {
-        setPendingNew((n) => n + (curr - prev));
-      }
-    }
-    prevLengthRef.current = curr;
-  }, [virtualItems.length, isAtBottom, scrollToBottomSmooth]);
+    scrollToBottom();
+  }, [messages, logs]);
 
-  // If the last message is a user message, force scroll to bottom
+  // Force scroll to bottom on initial load
   useEffect(() => {
-    if (displayableMessages.length === 0) return;
-    const last = displayableMessages[displayableMessages.length - 1];
-    if (last.role === 'user') {
-      scrollToBottomSmooth();
-    }
-  }, [displayableMessages, scrollToBottomSmooth]);
+    setTimeout(() => scrollToBottom(true), 100);
+  }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-black">
+    <div className="flex flex-col h-full bg-white dark:bg-black relative">
       {/* 메시지와 로그를 함께 표시 */}
-      <div className="flex-1 min-h-0 relative">
-        <Virtuoso
-          ref={virtuosoRef}
-          className="h-full custom-scrollbar dark:chat-scrollbar"
-          data={virtualItems}
-          itemContent={(index, item) => {
-            if (item.kind === 'loading') {
-              return (
-                <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
-                  <div className="flex flex-col items-center">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>
-                    <p>Loading chat history...</p>
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-8 py-3 space-y-2 custom-scrollbar dark:chat-scrollbar"
+      >
+        {/* Loading state */}
+        {isLoading && !historyLoadedOnceRef.current && (
+          <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+            <div className="flex flex-col items-center">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-white mb-2 mx-auto"></div>
+              <p>Loading chat history...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Empty state - hide if we have initial user message */}
+        {!isLoading && displayableMessages.length === 0 && displayableLogs.length === 0 && !initialUserMessage && (
+          <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
+            <div className="text-center">
+              <p>Start a conversation with your agent</p>
+            </div>
+          </div>
+        )}
+
+        {/* Show initial user message if provided and no user messages in displayableMessages */}
+        {initialUserMessage && !displayableMessages.some(m => m.role === 'user' && m.content.includes(initialUserMessage.substring(0, 50))) && (
+          <div className="mb-4">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <div className="flex justify-end">
+                <div className="max-w-[80%] bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-3">
+                  <div className="text-sm text-gray-900 dark:text-white break-words">
+                    {shortenPath(initialUserMessage)}
                   </div>
                 </div>
-              );
-            }
-            if (item.kind === 'empty') {
-              return (
-                <div className="flex items-center justify-center h-32 text-gray-400 dark:text-gray-600 text-sm">
-                  <div className="text-center">
-                    <div className="text-2xl mb-2">💬</div>
-                    <p>Start a conversation with your agent</p>
-                  </div>
-                </div>
-              );
-            }
-            if (item.kind === 'waiting') {
-              return (
-                <div className="mb-4 w-full">
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-                    <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
-                      <span className="animate-pulse">...</span>
-                    </div>
-                  </motion.div>
-                </div>
-              );
-            }
-            if (item.kind === 'log') {
-              const log = item.log;
-              return (
-                <div className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-                    <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
-                      {renderLogEntry(log)}
-                    </div>
-                  </motion.div>
-                </div>
-              );
-            }
-            // message
-            const message = item.message;
-            const isNewMessage = message.id === lastMessageId;
-            const messageContent = (
-              <>
-                {message.role === 'user' ? (
-                  <div className="flex justify-end">
-                    <div className="max-w-[80%] bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-3">
-                      <div className="text-sm text-gray-900 dark:text-white break-words">
-                        {(() => {
-                          const cleanedMessage = cleanUserMessage(message.content);
-                          const imagePattern = /Image #\d+ path: ([^\n]+)/g;
-                          const imagePaths: string[] = [];
-                          let match;
-                          while ((match = imagePattern.exec(cleanedMessage)) !== null) { imagePaths.push(match[1]); }
-                          const messageWithoutPaths = cleanedMessage.replace(/\n*Image #\d+ path: [^\n]+/g, '').trim();
-                          return (
-                            <>
-                              {messageWithoutPaths && (<div>{shortenPath(messageWithoutPaths)}</div>)}
-                              {(() => {
-                                const attachments = message.metadata_json?.attachments || [];
-                                if (attachments.length > 0) {
-                                  return (
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                      {attachments.map((attachment: any, idx: number) => {
-                                        const imageUrl = `${attachment.url}`;
-                                        return (
-                                          <div key={idx} className="relative group">
-                                            <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
-                                              <img src={imageUrl} alt={`Image ${idx + 1}`} className="w-full h-full object-cover" />
-                                            </div>
-                                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity flex items-center justify-center">
-                                              <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-60 px-2 py-1 rounded">#{idx + 1}</span>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  );
-                                } else if (imagePaths.length > 0) {
-                                  return (
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                      {imagePaths.map((path, idx) => (
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Show agent thinking indicator after initial message */}
+        {showAgentThinking && initialUserMessage && !displayableMessages.some(m => m.role === 'user' && m.content.includes(initialUserMessage.substring(0, 50))) && displayableMessages.filter(m => m.role === 'assistant').length === 0 && (
+          <div className="mb-4 w-full">
+            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+              <div className="flex gap-1 text-xl">
+                <motion.span
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+                >
+                  •
+                </motion.span>
+                <motion.span
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
+                >
+                  •
+                </motion.span>
+                <motion.span
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: 0.6 }}
+                >
+                  •
+                </motion.span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Messages */}
+        {displayableMessages.map((message, index) => {
+          const isNewMessage = message.id === lastMessageId;
+          const messageContent = (
+            <>
+              {message.role === 'user' ? (
+                <div className="flex justify-end">
+                  <div className="max-w-[80%] bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-3">
+                    <div className="text-sm text-gray-900 dark:text-white break-words">
+                      {(() => {
+                        const cleanedMessage = cleanUserMessage(message.content);
+                        const imagePattern = /Image #\d+ path: ([^\n]+)/g;
+                        const imagePaths: string[] = [];
+                        let match;
+                        while ((match = imagePattern.exec(cleanedMessage)) !== null) { imagePaths.push(match[1]); }
+                        const messageWithoutPaths = cleanedMessage.replace(/\n*Image #\d+ path: [^\n]+/g, '').trim();
+                        return (
+                          <>
+                            {messageWithoutPaths && (<div>{shortenPath(messageWithoutPaths)}</div>)}
+                            {(() => {
+                              const attachments = message.metadata_json?.attachments || [];
+                              if (attachments.length > 0) {
+                                return (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {attachments.map((attachment: any, idx: number) => {
+                                      const imageUrl = `${attachment.url}`;
+                                      return (
                                         <div key={idx} className="relative group">
-                                          <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 flex items-center justify-center">
-                                            <svg className="w-16 h-16 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                            </svg>
+                                          <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
+                                            <img src={imageUrl} alt={`Image ${idx + 1}`} className="w-full h-full object-cover" />
                                           </div>
                                           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity flex items-center justify-center">
                                             <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-60 px-2 py-1 rounded">#{idx + 1}</span>
                                           </div>
                                         </div>
-                                      ))}
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              })()}
-                            </>
-                          );
-                        })()}
-                      </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              } else if (imagePaths.length > 0) {
+                                return (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {imagePaths.map((path, idx) => (
+                                      <div key={idx} className="relative group">
+                                        <div className="w-40 h-40 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                                          <svg className="w-16 h-16 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                          </svg>
+                                        </div>
+                                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity flex items-center justify-center">
+                                          <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-60 px-2 py-1 rounded">#{idx + 1}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
-                ) : (
-                  <div className="w-full">
-                    {isToolUsageMessage(message.content, message.metadata_json) ? (
-                      <ToolMessage content={message.content} metadata={message.metadata_json} />
-                    ) : (
-                      <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
-                        {renderContentWithThinking(shortenPath(message.content))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            );
-            return (
-              <div className="mb-4">
-                <div>{messageContent}</div>
-              </div>
-            );
-          }}
-          followOutput="auto"
-          atBottomStateChange={(bottom) => {
-            setIsAtBottom(bottom);
-            if (bottom) setPendingNew(0);
-          }}
-          computeItemKey={(index, item) => (item as any).key}
-          components={{
-            List: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-              (props, ref) => (
-                <div ref={ref} {...props} className={`px-8 py-3 space-y-2 ${props.className || ''}`} />
-              )
-            )
-          }}
-        />
+                </div>
+              ) : (
+                <div className="w-full">
+                  {isToolUsageMessage(message.content, message.metadata_json) ? (
+                    <ToolMessage content={message.content} metadata={message.metadata_json} />
+                  ) : (
+                    <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
+                      {renderContentWithThinking(shortenPath(message.content))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          );
 
-        {/* New messages indicator when scrolled up */}
-        {pendingNew > 0 && !isAtBottom && (
-          <button
-            onClick={scrollToBottomSmooth}
-            className="absolute bottom-4 right-4 z-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 shadow-md"
-            title="Scroll to newest"
-          >
-            {pendingNew} new message{pendingNew > 1 ? 's' : ''}
-          </button>
+          return (
+            <div key={`message-${message.id}`} className="mb-4">
+              {isNewMessage ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  {messageContent}
+                </motion.div>
+              ) : (
+                <div>{messageContent}</div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Logs */}
+        {displayableLogs.map((log) => (
+          <div key={`log-${log.id}`} className="mb-4 w-full cursor-pointer" onClick={() => openDetailModal(log)}>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="text-sm text-gray-900 dark:text-white leading-relaxed">
+                {renderLogEntry(log)}
+              </div>
+            </motion.div>
+          </div>
+        ))}
+
+        {/* Waiting state */}
+        {isWaitingForResponse && (
+          <div className="mb-4 w-full">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="text-xl text-gray-900 dark:text-white leading-relaxed font-bold">
+                <span className="animate-pulse">...</span>
+              </div>
+            </motion.div>
+          </div>
         )}
+        <div ref={logsEndRef} />
       </div>
+
+      {/* Build Error Modal - Positioned above chat area */}
+      <AnimatePresence>
+        {showErrorModal && buildError && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="absolute bottom-0 left-0 right-0 z-50 p-4"
+          >
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4 shadow-xl backdrop-blur-sm">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center mb-2">
+                    <svg className="w-5 h-5 text-red-600 dark:text-red-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span className="text-sm font-semibold text-red-900 dark:text-red-100">Build Error Detected</span>
+                  </div>
+                  <div className="text-xs text-red-800 dark:text-red-200 mb-3 max-h-24 overflow-y-auto font-mono bg-red-100 dark:bg-red-900/30 p-2 rounded">
+                    {buildError.split('\n').slice(0, 4).join('\n')}
+                    {buildError.split('\n').length > 4 && '\n...'}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleFixError}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors shadow-sm"
+                    >
+                      Fix Error
+                    </button>
+                    <button
+                      onClick={() => setShowErrorModal(false)}
+                      className="px-4 py-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-md transition-colors border border-gray-300 dark:border-gray-600"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 상세 모달 */}
       <AnimatePresence>

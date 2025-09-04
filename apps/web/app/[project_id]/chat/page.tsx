@@ -198,8 +198,8 @@ export default function ChatPage({ params }: Params) {
   const [deploymentId, setDeploymentId] = useState<string | null>(null);
   const [deploymentStatus, setDeploymentStatus] = useState<'idle' | 'deploying' | 'ready' | 'error'>('idle');
   const deployPollRef = useRef<NodeJS.Timeout | null>(null);
-  const [isStartingPreview, setIsStartingPreview] = useState(false);
-  const [previewInitializationMessage, setPreviewInitializationMessage] = useState('Starting development server...');
+  const [isStartingPreview, setIsStartingPreview] = useState(true); // Start with building state
+  const [previewInitializationMessage, setPreviewInitializationMessage] = useState('Building your application...');
   const [preferredCli, setPreferredCli] = useState<string>('claude');
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [usingGlobalDefaults, setUsingGlobalDefaults] = useState<boolean>(true);
@@ -208,9 +208,12 @@ export default function ChatPage({ params }: Params) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isFileUpdating, setIsFileUpdating] = useState(false);
   const wsReadyRef = useRef(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
   
   // ★ NEW: Project 정보를 저장할 state 추가
   const [projectInfo, setProjectInfo] = useState<any>(null);
+  const [showInitialUserMessage, setShowInitialUserMessage] = useState(false);
+  const [initialPromptFromSession, setInitialPromptFromSession] = useState<string | null>(null);
 
   // Guarded trigger that can be called from multiple places safely
   const triggerInitialPromptIfNeeded = useCallback(() => {
@@ -247,6 +250,9 @@ export default function ChatPage({ params }: Params) {
     if (modelFromUrl) {
       sessionStorage.setItem('selectedModel', modelFromUrl);
     }
+    
+    // Show user message immediately in chat
+    setShowInitialUserMessage(true);
     
     // Don't show the initial prompt in the input field
     // setPrompt(initialPromptFromDb);
@@ -416,11 +422,11 @@ export default function ChatPage({ params }: Params) {
   async function start() {
     try {
       setIsStartingPreview(true);
-      setPreviewInitializationMessage('Starting development server...');
+      setPreviewInitializationMessage('Building your application...');
       
       // Simulate progress updates
-      setTimeout(() => setPreviewInitializationMessage('Installing dependencies...'), 1000);
-      setTimeout(() => setPreviewInitializationMessage('Building your application...'), 2500);
+      setTimeout(() => setPreviewInitializationMessage('Starting development server...'), 1000);
+      setTimeout(() => setPreviewInitializationMessage('Optimizing bundle...'), 2500);
       
       const r = await fetch(`${API_BASE}/api/projects/${projectId}/preview/start`, { method: 'POST' });
       if (!r.ok) {
@@ -624,6 +630,62 @@ export default function ChatPage({ params }: Params) {
   // Lazy load highlight.js only when needed
   const [hljs, setHljs] = useState<any>(null);
   
+  // Monitor for build errors from iframe postMessage and preview URL changes
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Check if message is from our preview iframe
+      if (event.source === iframeRef.current?.contentWindow) {
+        // Check for Next.js error messages
+        if (event.data?.type === 'nextjs-error' || 
+            (typeof event.data === 'string' && event.data.includes('Failed to compile'))) {
+          setBuildError(event.data?.message || event.data);
+        }
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+  
+  // Also check for errors when preview URL changes (new preview started)
+  useEffect(() => {
+    if (previewUrl && iframeRef.current) {
+      // Give iframe time to load then check for errors
+      const checkInterval = setInterval(() => {
+        try {
+          const iframeDoc = iframeRef.current?.contentDocument;
+          if (iframeDoc) {
+            const bodyText = iframeDoc.body?.innerText || '';
+            if (bodyText.includes('Failed to compile') || 
+                bodyText.includes('Build Error') ||
+                bodyText.includes('Module not found')) {
+              
+              // Extract error message
+              const lines = bodyText.split('\n').filter(l => l.trim());
+              const errorIdx = lines.findIndex(l => 
+                l.includes('Failed to compile') || l.includes('Build Error')
+              );
+              
+              if (errorIdx !== -1) {
+                const errorMsg = lines.slice(errorIdx, Math.min(errorIdx + 15, lines.length)).join('\n');
+                console.log('Preview error detected:', errorMsg);
+                setBuildError(errorMsg);
+                clearInterval(checkInterval);
+              }
+            }
+          }
+        } catch (e) {
+          // Cross-origin - can't access iframe content directly
+        }
+      }, 1000);
+      
+      // Stop checking after 10 seconds
+      setTimeout(() => clearInterval(checkInterval), 10000);
+      
+      return () => clearInterval(checkInterval);
+    }
+  }, [previewUrl]);
+
   useEffect(() => {
     if (selectedFile && !hljs) {
       import('highlight.js/lib/common').then(mod => {
@@ -1275,6 +1337,24 @@ export default function ChatPage({ params }: Params) {
     let mounted = true;
     let timer: NodeJS.Timeout | null = null;
     
+    // Check for initial prompt from project creation immediately
+    const checkForInitialPrompt = () => {
+      const storedPrompt = sessionStorage.getItem(`project_${projectId}_initialPrompt`);
+      if (storedPrompt) {
+        setInitialPromptFromSession(storedPrompt);
+        setShowInitialUserMessage(true);
+        sessionStorage.removeItem(`project_${projectId}_initialPrompt`);
+        // Start preview immediately when we have initial prompt
+        setIsStartingPreview(true);
+        setPreviewInitializationMessage('Building your application...');
+      } else {
+        // No initial prompt, show normal state
+        setIsStartingPreview(false);
+      }
+    };
+    
+    checkForInitialPrompt();
+    
     const initializeChat = async () => {
       if (!mounted) return;
       
@@ -1509,6 +1589,10 @@ export default function ChatPage({ params }: Params) {
                 completeRequest={completeRequest}
                 onWebSocketConnect={() => { wsReadyRef.current = true; triggerInitialPromptIfNeeded(); }}
                 onWebSocketDisconnect={() => { wsReadyRef.current = false; }}
+                initialUserMessage={showInitialUserMessage ? (initialPromptFromSession || projectInfo?.initial_prompt) : null}
+                showAgentThinking={showInitialUserMessage}
+                buildError={buildError}
+                onSubmitMessage={(message) => runAct(message, [])}
               />
             </div>
             
@@ -1865,6 +1949,7 @@ export default function ChatPage({ params }: Params) {
                         ref={iframeRef}
                         className="w-full h-full border-none bg-white dark:bg-gray-800"
                         src={previewUrl}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
                         onError={() => {
                           // Show error overlay
                           const overlay = document.getElementById('iframe-error-overlay');
@@ -1874,6 +1959,95 @@ export default function ChatPage({ params }: Params) {
                           // Hide error overlay when loaded successfully
                           const overlay = document.getElementById('iframe-error-overlay');
                           if (overlay) overlay.style.display = 'none';
+                          
+                          // Check for Next.js build errors in the iframe content
+                          const checkForErrors = () => {
+                            try {
+                              const iframeDocument = iframeRef.current?.contentDocument;
+                              const iframeWindow = iframeRef.current?.contentWindow;
+                              
+                              if (iframeDocument && iframeWindow) {
+                                // Method 1: Check body text for error patterns
+                                const bodyText = iframeDocument.body?.innerText || '';
+                                
+                                // Method 2: Check for Next.js error overlay
+                                const errorOverlay = iframeDocument.querySelector('[data-nextjs-dialog], #nextjs__container_build_error_label, [data-nextjs-error], .nextjs-container-build-error-body');
+                                
+                                // Method 3: Check the document title (Next.js often changes it on errors)
+                                const hasErrorTitle = iframeDocument.title.includes('Error') || iframeDocument.title.includes('Failed');
+                                
+                                // Method 4: Check for error elements
+                                const errorElements = iframeDocument.querySelectorAll('h1, h2, div');
+                                let errorFound = false;
+                                let errorMessage = '';
+                                
+                                for (const el of errorElements) {
+                                  const text = el.textContent || '';
+                                  if (text.includes('Failed to compile') || 
+                                      text.includes('Build Error') ||
+                                      text.includes('Module not found') ||
+                                      text.includes('Syntax error') ||
+                                      text.includes('Cannot find module')) {
+                                    errorFound = true;
+                                    // Try to get full error context
+                                    errorMessage = bodyText;
+                                    break;
+                                  }
+                                }
+                                
+                                // Check if we found any errors
+                                if (errorFound || errorOverlay || hasErrorTitle || 
+                                    bodyText.includes('Failed to compile') || 
+                                    bodyText.includes('Build Error') ||
+                                    bodyText.includes('Module not found')) {
+                                  
+                                  let extractedError = errorMessage || bodyText;
+                                  
+                                  // Clean up the error message
+                                  const lines = extractedError.split('\n').filter(line => line.trim());
+                                  const errorStart = lines.findIndex(line => 
+                                    line.includes('Failed to compile') || 
+                                    line.includes('Build Error') ||
+                                    line.includes('Error:')
+                                  );
+                                  
+                                  if (errorStart !== -1) {
+                                    extractedError = lines.slice(errorStart, Math.min(errorStart + 20, lines.length)).join('\n');
+                                  }
+                                  
+                                  if (extractedError && extractedError.length > 10) {
+                                    console.log('Build error detected:', extractedError.substring(0, 200));
+                                    setBuildError(extractedError);
+                                  }
+                                } else {
+                                  // Clear error if page loads successfully
+                                  setBuildError(null);
+                                }
+                              }
+                            } catch (e) {
+                              // Try alternative detection via fetch
+                              if (previewUrl) {
+                                fetch(previewUrl)
+                                  .then(res => res.text())
+                                  .then(html => {
+                                    if (html.includes('Failed to compile') || 
+                                        html.includes('Build Error') ||
+                                        html.includes('Module not found')) {
+                                      const match = html.match(/Failed to compile[\s\S]{0,1000}|Build Error[\s\S]{0,1000}/);
+                                      if (match) {
+                                        setBuildError(match[0].replace(/<[^>]*>/g, ''));
+                                      }
+                                    }
+                                  })
+                                  .catch(() => {});
+                              }
+                            }
+                          };
+                          
+                          // Check immediately and after a delay
+                          checkForErrors();
+                          setTimeout(checkForErrors, 1000);
+                          setTimeout(checkForErrors, 2000);
                         }}
                       />
                       

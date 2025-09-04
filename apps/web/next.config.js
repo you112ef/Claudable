@@ -15,7 +15,9 @@ if (process.env.NODE_ENV === 'development') {
         message.includes('PUT /api') ||
         /\b\d{3}\b in \d+ms/.test(message) || // e.g., "200 in 12ms"
         message.includes('✓ Compiled') ||
-        message.includes('○ Compiling')
+        message.includes('○ Compiling') ||
+        message.includes('[WS(api)] Closed') ||
+        message.includes('Warning:') && message.includes('defaultProps')
       ) {
         return
       }
@@ -36,7 +38,9 @@ if (process.env.NODE_ENV === 'development') {
           /\b\d{3}\b in \d+ms\b/.test(s) ||
           s.includes('✓ Compiled') ||
           s.includes('○ Compiling') ||
-          /Compiled in \d+ms/.test(s)
+          /Compiled in \d+ms/.test(s) ||
+          s.includes('[WS(api)] Closed') ||
+          (s.includes('Warning:') && s.includes('defaultProps'))
         ) {
           return true
         }

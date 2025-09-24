@@ -147,6 +147,8 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
   const [selectedCLI, setSelectedCLI] = useState<CLIOption | null>(null);
   const [backendUrlInput, setBackendUrlInput] = useState('');
   const [backendUrlSaved, setBackendUrlSaved] = useState<string | null>(null);
+  const [backendAuthInput, setBackendAuthInput] = useState('');
+  const [backendAuthSaved, setBackendAuthSaved] = useState<string | null>(null);
 
   // Show toast function
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -164,6 +166,12 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
         setBackendUrlInput(val);
         setBackendUrlSaved(val);
       }
+      const authMatch = document.cookie.match(/(?:^|; )backend_auth_bearer=([^;]+)/);
+      const authVal = authMatch ? decodeURIComponent(authMatch[1]) : '';
+      if (authVal) {
+        setBackendAuthInput(authVal);
+        setBackendAuthSaved('********');
+      }
     } catch {}
   }, [isOpen]);
 
@@ -180,6 +188,22 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
       showToast('Backend URL saved for this browser', 'success');
     } catch (e) {
       showToast('Failed to save URL', 'error');
+    }
+  };
+
+  const saveBackendAuthCookie = () => {
+    try {
+      const val = backendAuthInput.trim();
+      if (!val) {
+        showToast('Enter a valid bearer token', 'error');
+        return;
+      }
+      const expires = new Date(Date.now() + 365*24*60*60*1000).toUTCString();
+      document.cookie = `backend_auth_bearer=${encodeURIComponent(val)}; path=/; expires=${expires}`;
+      setBackendAuthSaved('********');
+      showToast('Auth token saved for this browser', 'success');
+    } catch (e) {
+      showToast('Failed to save token', 'error');
     }
   };
 
@@ -463,6 +487,27 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
                     {backendUrlSaved && (
                       <div className="text-xs text-gray-600 dark:text-gray-400">Current: {backendUrlSaved}</div>
                     )}
+                    <div className="mt-4">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Optional: Set a bearer token if your API requires Authorization.</p>
+                      <div className="flex gap-2 items-center mt-2">
+                        <input
+                          type="password"
+                          placeholder="Bearer token (JWT)"
+                          value={backendAuthInput}
+                          onChange={(e) => setBackendAuthInput(e.target.value)}
+                          className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                        />
+                        <button
+                          onClick={saveBackendAuthCookie}
+                          className="px-3 py-2 rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm"
+                        >
+                          Save Token
+                        </button>
+                      </div>
+                      {backendAuthSaved && (
+                        <div className="text-xs text-gray-600 dark:text-gray-400">Token: {backendAuthSaved}</div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div>

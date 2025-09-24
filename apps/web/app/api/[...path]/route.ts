@@ -34,6 +34,12 @@ async function proxy(request: Request, { params }: { params: { path: string[] } 
   headers.delete('x-forwarded-host');
   headers.delete('x-forwarded-proto');
 
+  // Inject Authorization header from cookie if present
+  const authBearer = cookieStore.get('backend_auth_bearer')?.value;
+  if (authBearer && !headers.has('authorization')) {
+    headers.set('authorization', `Bearer ${authBearer}`);
+  }
+
   const init: RequestInit = {
     method: request.method,
     headers,

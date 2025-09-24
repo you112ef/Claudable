@@ -128,11 +128,15 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
   const { theme, toggle: toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<'general' | 'ai-agents' | 'services' | 'about'>(initialTab);
   const [serviceModalOpen, setServiceModalOpen] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'github' | 'supabase' | 'vercel' | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<'github' | 'supabase' | 'vercel' | 'openai' | 'anthropic' | 'google' | 'qwen' | null>(null);
   const [tokens, setTokens] = useState<{ [key: string]: ServiceToken | null }>({
     github: null,
     supabase: null,
-    vercel: null
+    vercel: null,
+    openai: null,
+    anthropic: null,
+    google: null,
+    qwen: null
   });
   const [cliStatus, setCLIStatus] = useState<CLIStatus>({});
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -158,7 +162,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
   }, [isOpen]);
 
   const loadAllTokens = async () => {
-    const providers = ['github', 'supabase', 'vercel'];
+    const providers = ['github', 'supabase', 'vercel', 'openai', 'anthropic', 'google', 'qwen'];
     const newTokens: { [key: string]: ServiceToken | null } = {};
     
     for (const provider of providers) {
@@ -177,7 +181,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
     setTokens(newTokens);
   };
 
-  const handleServiceClick = (provider: 'github' | 'supabase' | 'vercel') => {
+  const handleServiceClick = (provider: 'github' | 'supabase' | 'vercel' | 'openai' | 'anthropic' | 'google' | 'qwen') => {
     setSelectedProvider(provider);
     setServiceModalOpen(true);
   };
@@ -661,7 +665,7 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                           )}
                           <button
-                            onClick={() => handleServiceClick(provider as 'github' | 'supabase' | 'vercel')}
+                            onClick={() => handleServiceClick(provider as any)}
                             className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-all"
                           >
                             {token ? 'Update Token' : 'Add Token'}

@@ -8,7 +8,21 @@ async function proxy(request: Request, { params }: { params: { path: string[] } 
   const cookieBackend = cookieStore.get('backend_base_url')?.value;
   const BACKEND_BASE_URL = cookieBackend || ENV_BACKEND_BASE_URL;
   if (!BACKEND_BASE_URL) {
-    return NextResponse.json({ error: 'BACKEND_BASE_URL is not configured. Set it in Vercel or via cookie.' }, { status: 500 });
+    // Graceful fallbacks for common endpoints to avoid breaking the UI
+    const pathOnly = (params.path || []).join('/');
+    if (pathOnly === 'projects') {
+      return NextResponse.json([]);
+    }
+    if (pathOnly === 'settings/cli-status') {
+      return NextResponse.json({
+        claude: { installed: true, checking: false, version: 'n/a' },
+        cursor: { installed: true, checking: false, version: 'n/a' },
+        codex: { installed: true, checking: false, version: 'n/a' },
+        gemini: { installed: true, checking: false, version: 'n/a' },
+        qwen: { installed: true, checking: false, version: 'n/a' }
+      });
+    }
+    return NextResponse.json({ error: 'BACKEND_BASE_URL is not configured. Set it in Global Settings → General.' }, { status: 500 });
   }
 
   const url = new URL(request.url);

@@ -145,11 +145,42 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [selectedCLI, setSelectedCLI] = useState<CLIOption | null>(null);
+  const [backendUrlInput, setBackendUrlInput] = useState('');
+  const [backendUrlSaved, setBackendUrlSaved] = useState<string | null>(null);
 
   // Show toast function
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  // Load backend URL from cookie
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const match = document.cookie.match(/(?:^|; )backend_base_url=([^;]+)/);
+      const val = match ? decodeURIComponent(match[1]) : '';
+      if (val) {
+        setBackendUrlInput(val);
+        setBackendUrlSaved(val);
+      }
+    } catch {}
+  }, [isOpen]);
+
+  const saveBackendUrlCookie = () => {
+    try {
+      const val = backendUrlInput.trim();
+      if (!val.startsWith('http')) {
+        showToast('Enter a valid URL starting with http(s)://', 'error');
+        return;
+      }
+      const expires = new Date(Date.now() + 365*24*60*60*1000).toUTCString();
+      document.cookie = `backend_base_url=${encodeURIComponent(val)}; path=/; expires=${expires}`;
+      setBackendUrlSaved(val);
+      showToast('Backend URL saved for this browser', 'success');
+    } catch (e) {
+      showToast('Failed to save URL', 'error');
+    }
   };
 
   // Load all service tokens and CLI data
@@ -410,6 +441,30 @@ export default function GlobalSettings({ isOpen, onClose, initialTab = 'general'
           <div className="flex-1 p-6 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
             {activeTab === 'general' && (
               <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Backend API</h3>
+                  <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-700 space-y-3">
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Set the backend API base URL used by this browser session. This is a fallback if the server env is not configured.</p>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="url"
+                        placeholder="https://your-api.example.com"
+                        value={backendUrlInput}
+                        onChange={(e) => setBackendUrlInput(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                      />
+                      <button
+                        onClick={saveBackendUrlCookie}
+                        className="px-3 py-2 rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm"
+                      >
+                        Save
+                      </button>
+                    </div>
+                    {backendUrlSaved && (
+                      <div className="text-xs text-gray-600 dark:text-gray-400">Current: {backendUrlSaved}</div>
+                    )}
+                  </div>
+                </div>
                 <div>
                   <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Appearance</h3>
                   <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-700">

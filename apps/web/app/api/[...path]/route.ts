@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
-const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL;
+const ENV_BACKEND_BASE_URL = process.env.BACKEND_BASE_URL;
 
 async function proxy(request: Request, { params }: { params: { path: string[] } }) {
+  const cookieStore = cookies();
+  const cookieBackend = cookieStore.get('backend_base_url')?.value;
+  const BACKEND_BASE_URL = cookieBackend || ENV_BACKEND_BASE_URL;
   if (!BACKEND_BASE_URL) {
-    return NextResponse.json(
-      { error: 'Server misconfiguration: BACKEND_BASE_URL is not set' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'BACKEND_BASE_URL is not configured. Set it in Vercel or via cookie.' }, { status: 500 });
   }
 
   const url = new URL(request.url);

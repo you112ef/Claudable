@@ -1226,6 +1226,12 @@ export default function HomePage() {
             
             {/* Example Cards */}
             <div className="flex flex-wrap gap-2 justify-center mt-8">
+              <a
+                href="/users"
+                className="px-4 py-2 text-sm font-medium text-white bg-black dark:bg-white dark:text-black rounded-full hover:opacity-90 transition-all"
+              >
+                Add User
+              </a>
               {[
                 { 
                   text: 'Landing Page',

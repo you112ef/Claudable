@@ -1,7 +1,7 @@
 "use client";
 import { useState } from 'react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE = '';
 
 export default function UsersPage() {
   const [email, setEmail] = useState("");

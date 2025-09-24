@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE = '';
 
 interface ServiceConnectionModalProps {
   isOpen: boolean;
@@ -41,7 +41,7 @@ export default function ServiceConnectionModal({
 
   const loadSavedToken = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/tokens/${provider}`);
+      const response = await fetch(`/api/tokens/${provider}`);
       if (response.ok) {
         const tokenData = await response.json();
         setSavedToken(tokenData);
@@ -62,7 +62,7 @@ export default function ServiceConnectionModal({
     
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/tokens`, {
+      const response = await fetch(`/api/tokens`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -98,7 +98,7 @@ export default function ServiceConnectionModal({
     
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/tokens/${savedToken.id}`, {
+      const response = await fetch(`/api/tokens/${savedToken.id}`, {
         method: 'DELETE'
       });
       
@@ -123,7 +123,7 @@ export default function ServiceConnectionModal({
     setActionLoading(true);
     try {
       if (action === 'create-repo') {
-        const response = await fetch(`${API_BASE}/api/github/create-repo`, {
+        const response = await fetch(`/api/github/create-repo`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -158,7 +158,7 @@ export default function ServiceConnectionModal({
         const dbPass = prompt('Enter database password for new Supabase project:');
         if (!dbPass) return;
         
-        const response = await fetch(`${API_BASE}/api/supabase/create-project`, {
+        const response = await fetch(`/api/supabase/create-project`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -191,7 +191,7 @@ export default function ServiceConnectionModal({
     setActionLoading(true);
     try {
       if (action === 'deploy') {
-        const response = await fetch(`${API_BASE}/api/vercel/deploy`, {
+        const response = await fetch(`/api/vercel/deploy`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

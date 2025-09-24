@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build --workspace=@open-agent-platform/web || npm run build --workspace=cc-lovable-web || npm run -w apps/web build",
+  "buildCommand": "npm run -w apps/web build",
   "installCommand": "npm install",
   "framework": "nextjs",
   "functions": {

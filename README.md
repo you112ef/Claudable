@@ -289,24 +289,28 @@ MIT License.
 ## New Features (v2.0)
 
 ### 🔐 Secure API Key Management
-- **Built-in UI**: Manage all your AI service API keys through a secure web interface
-- **No Hardcoded Keys**: All API keys are stored securely and used dynamically
+- **Built-in UI**: Manage all your AI service API keys through a secure web interface at `/api-keys`
+- **No Hardcoded Keys**: All API keys are stored securely in the database and used dynamically
 - **Multi-Provider Support**: Support for Claude, Cursor, OpenAI, Google, Qwen, GitHub, Supabase, and Vercel
+- **Real-time Updates**: API keys are immediately available to all AI agents
 
 ### 🚀 MCP (Multi-Context Protocol) Support
 - **Enhanced Context**: All AI agents now support MCP for better context awareness
 - **Session Continuity**: Maintain conversation context across multiple interactions
 - **Tool Integration**: Seamless integration with MCP-enabled tools and services
+- **Multi-Context Sessions**: Each user gets isolated context sessions
 
 ### 🛡️ Sandbox Execution
 - **Safe Code Execution**: All AI-generated code runs in isolated sandbox environments
 - **Permission Controls**: Fine-grained control over what code can access
 - **Security First**: Protect your system from potentially harmful AI-generated code
+- **Dynamic Sandbox**: Sandbox environments are created and destroyed per session
 
 ### 🚀 Production-Ready Deployment
 - **Vercel Integration**: One-click deployment to Vercel with automatic configuration
 - **Environment Secrets**: Secure handling of API keys and sensitive data
 - **GitHub Actions**: Automated CI/CD pipeline for continuous deployment
+- **Automatic Publishing**: Push to main → Production deployment, PR → Preview deployment
 
 ## Upcoming Features
 These features are in development and will be opened soon.

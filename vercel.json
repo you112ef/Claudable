@@ -6,14 +6,14 @@
       "use": "@vercel/next"
     },
     {
-      "src": "apps/api/main.py",
+      "src": "apps/api/app/main.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/apps/api/main.py"
+      "dest": "/apps/api/app/main.py"
     },
     {
       "src": "/(.*)",
@@ -28,7 +28,7 @@
     "PREVIEW_PORT_END": "3999"
   },
   "functions": {
-    "apps/api/main.py": {
+    "apps/api/app/main.py": {
       "memory": 1024,
       "maxDuration": 60
     }

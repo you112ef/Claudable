@@ -1,0 +1,35 @@
+# Core FastAPI dependencies
+fastapi>=0.112
+uvicorn[standard]>=0.30
+pydantic>=2.7
+
+# Database
+SQLAlchemy>=2.0
+
+# HTTP client
+httpx>=0.27
+
+# Environment management
+python-dotenv>=1.0
+
+# WebSocket support
+websockets>=12.0
+
+# Security
+cryptography>=42.0
+
+# AI SDKs
+openai>=1.40
+
+# File handling
+python-multipart>=0.0.6
+
+# Validation
+email-validator>=2.0.0
+
+# Optional: Remove heavy dependencies that might cause issues
+# docker>=7.0  # Commented out - can cause deployment issues
+# claude-code-sdk>=0.0.20  # Commented out - may not be available
+# unidiff>=0.7  # Commented out - optional
+# aiohttp>=3.9  # Commented out - optional
+# rich>=13.0  # Commented out - optional

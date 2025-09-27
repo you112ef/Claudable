@@ -14,5 +14,7 @@
   ],
   "env": {
     "NEXT_PUBLIC_API_BASE": "@api_base_url"
-  }
+  },
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next"
 }

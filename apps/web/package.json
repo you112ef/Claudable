@@ -6,7 +6,8 @@
     "dev": "node scripts/dev.js",
     "dev:no-open": "next dev --turbo",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "vercel-build": "next build"
   },
   "dependencies": {
     "clsx": "2.1.1",

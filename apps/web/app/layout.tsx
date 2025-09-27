@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_API_BASE || 'https://your-app.vercel.app'),
   title: 'Claudable',
   description: 'Claudable Application',
   icons: {

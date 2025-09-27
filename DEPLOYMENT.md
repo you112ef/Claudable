@@ -1,154 +1,122 @@
 # Claudable Deployment Guide
 
-## Vercel Deployment
+## Automatic Vercel Deployment
+
+Claudable is configured for automatic deployment to Vercel with GitHub integration.
 
 ### Prerequisites
-- Vercel account
-- GitHub repository with Claudable code
-- API keys for AI services (Claude, Cursor, OpenAI, etc.)
 
-### Environment Variables
+1. **GitHub Repository**: Push your code to a GitHub repository
+2. **Vercel Account**: Sign up at [vercel.com](https://vercel.com)
+3. **API Keys**: Collect API keys for AI services (optional - can be set via UI)
 
-Configure the following environment variables in your Vercel project settings:
+### Environment Secrets
 
-#### Required Environment Variables
+Configure the following secrets in your Vercel project settings:
 
-```bash
-# Database
-DATABASE_URL=postgresql://username:password@host:port/database
+#### Required Secrets
+- `DATABASE_URL` - PostgreSQL connection string (Vercel provides this automatically)
 
-# API Configuration
-API_PORT=8080
-PROJECTS_ROOT=/tmp/projects
-PREVIEW_PORT_START=3100
-PREVIEW_PORT_END=3999
+#### Optional AI Service Secrets
+- `CLAUDE_API_KEY` - Anthropic Claude API key
+- `CURSOR_API_KEY` - Cursor API key  
+- `OPENAI_API_KEY` - OpenAI API key
+- `GOOGLE_API_KEY` - Google Gemini API key
+- `QWEN_API_KEY` - Qwen API key
 
-# Web App Configuration
-NEXT_PUBLIC_API_BASE=https://your-api-domain.vercel.app
-```
-
-#### Optional Environment Variables
-
-```bash
-# AI Service API Keys (can also be set via UI)
-CLAUDE_API_KEY=your_claude_api_key
-CURSOR_API_KEY=your_cursor_api_key
-OPENAI_API_KEY=your_openai_api_key
-GOOGLE_API_KEY=your_google_api_key
-QWEN_API_KEY=your_qwen_api_key
-
-# GitHub Integration
-GITHUB_TOKEN=your_github_token
-
-# Supabase Integration
-SUPABASE_URL=your_supabase_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-# Vercel Integration
-VERCEL_TOKEN=your_vercel_token
-```
+#### Optional Integration Secrets
+- `GITHUB_TOKEN` - GitHub Personal Access Token
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anonymous key
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+- `VERCEL_TOKEN` - Vercel API token
+- `VERCEL_ORG_ID` - Vercel organization ID
+- `VERCEL_PROJECT_ID` - Vercel project ID
 
 ### Deployment Steps
 
-1. **Connect Repository to Vercel**
+1. **Connect Repository to Vercel**:
    - Go to [Vercel Dashboard](https://vercel.com/dashboard)
    - Click "New Project"
    - Import your GitHub repository
+   - Vercel will automatically detect the Next.js configuration
 
-2. **Configure Build Settings**
-   - Framework Preset: Next.js
-   - Root Directory: `apps/web`
-   - Build Command: `npm run build`
-   - Output Directory: `.next`
+2. **Configure Environment Variables**:
+   - In your Vercel project settings, go to "Environment Variables"
+   - Add the secrets listed above
+   - Set them for Production, Preview, and Development environments
 
-3. **Set Environment Variables**
-   - Go to Project Settings → Environment Variables
-   - Add all required environment variables
-   - Set them for Production, Preview, and Development
+3. **Deploy**:
+   - Push to `main` branch for production deployment
+   - Create pull requests for preview deployments
+   - Vercel will automatically build and deploy
 
-4. **Deploy API Separately**
-   - Create a second Vercel project for the API
-   - Root Directory: `apps/api`
-   - Framework Preset: Python
-   - Build Command: `pip install -r requirements.txt`
+### GitHub Actions (Optional)
 
-5. **Update API Base URL**
-   - Set `NEXT_PUBLIC_API_BASE` to your API deployment URL
+The repository includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) for additional deployment automation.
 
-### Database Setup
+### Manual Deployment
 
-For production, use a PostgreSQL database:
+If you prefer manual deployment:
 
-1. **Supabase (Recommended)**
-   - Create a new Supabase project
-   - Get connection string from Settings → Database
-   - Set as `DATABASE_URL`
+```bash
+# Install Vercel CLI
+npm i -g vercel
 
-2. **Other PostgreSQL Providers**
-   - Neon, PlanetScale, or any PostgreSQL provider
-   - Use connection string format: `postgresql://user:pass@host:port/db`
+# Login to Vercel
+vercel login
 
-### Security Considerations
+# Deploy
+vercel --prod
+```
 
-1. **API Keys**
-   - Never commit API keys to repository
-   - Use Vercel environment variables
-   - Consider using the built-in API key management UI
+### Post-Deployment
 
-2. **Database**
-   - Use connection pooling for production
-   - Enable SSL connections
-   - Regular backups
-
-3. **CORS**
-   - Configure CORS for your domain
-   - Restrict API access to your frontend domain
-
-### Monitoring
-
-1. **Vercel Analytics**
-   - Enable Vercel Analytics for performance monitoring
-   - Monitor API response times
-
-2. **Error Tracking**
-   - Consider integrating Sentry or similar service
-   - Monitor API errors and performance
+1. **Access Your App**: Visit the Vercel URL provided after deployment
+2. **Configure API Keys**: Use the built-in API Keys page (`/api-keys`) to add your AI service credentials
+3. **Test Functionality**: Create a test project to verify all features work
 
 ### Troubleshooting
 
-1. **Build Failures**
-   - Check Node.js version compatibility
-   - Verify all dependencies are in package.json
-   - Check for TypeScript errors
+#### Build Failures
+- Check that all environment variables are set
+- Ensure Node.js version is 18+ (configured in `package.json`)
+- Verify all dependencies are installed
 
-2. **API Issues**
-   - Verify environment variables are set
-   - Check database connectivity
-   - Monitor Vercel function logs
+#### Runtime Errors
+- Check Vercel function logs in the dashboard
+- Verify API keys are correctly configured
+- Ensure database connection is working
 
-3. **Database Issues**
-   - Verify connection string format
-   - Check database permissions
-   - Monitor connection limits
+#### API Key Issues
+- Use the web UI at `/api-keys` to manage API keys
+- API keys are stored securely in the database
+- No need to set environment variables for API keys if using the UI
 
 ### Production Checklist
 
-- [ ] All environment variables configured
-- [ ] Database connection tested
-- [ ] API keys set via UI or environment variables
-- [ ] CORS configured properly
-- [ ] SSL certificates valid
-- [ ] Monitoring and logging enabled
-- [ ] Backup strategy implemented
-- [ ] Performance testing completed
-- [ ] Security audit performed
+- [ ] All environment secrets configured
+- [ ] Database connection working
+- [ ] API keys added via UI
+- [ ] Test project creation works
+- [ ] AI agents respond correctly
+- [ ] File operations work
+- [ ] WebSocket connections stable
+- [ ] Error handling working
 
 ### Support
 
 For deployment issues:
 1. Check Vercel function logs
-2. Verify environment variables
-3. Test API endpoints manually
-4. Check database connectivity
-5. Review error messages in browser console
+2. Review GitHub Actions logs (if using)
+3. Verify environment variable configuration
+4. Test locally first with `npm run dev`
+
+## Features Included
+
+✅ **MCP Support**: Multi-Context Protocol enabled for all AI agents
+✅ **Sandbox Execution**: Safe code execution with isolated environments  
+✅ **API Key Management**: Secure UI for managing all AI service credentials
+✅ **Multiple AI Agents**: Claude, Cursor, Codex, Qwen, and Gemini support
+✅ **Automatic Deployment**: GitHub + Vercel integration
+✅ **Production Ready**: Error handling, logging, and monitoring

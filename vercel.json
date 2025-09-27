@@ -25,13 +25,18 @@
     "DATABASE_URL": "@database_url",
     "PROJECTS_ROOT": "/tmp/projects",
     "PREVIEW_PORT_START": "3100",
-    "PREVIEW_PORT_END": "3999"
+    "PREVIEW_PORT_END": "3999",
+    "ENVIRONMENT": "production"
   },
   "functions": {
     "apps/api/app/main.py": {
       "memory": 1024,
       "maxDuration": 60
     }
+  },
+  "github": {
+    "enabled": true,
+    "autoAliases": true
   }
 }
 

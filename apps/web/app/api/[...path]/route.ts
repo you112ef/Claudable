@@ -31,6 +31,37 @@ async function proxy(request: Request, { params }: { params: { path: string[] } 
         // Simulate not configured token
         return NextResponse.json({ detail: 'Token not found' }, { status: 404 });
       }
+      if (pathOnly === 'ai/status') {
+        return NextResponse.json({
+          overall: { configured: false, available: false },
+          providers: [
+            { name: 'openai', configured: false, available: false, error: null, details: {} }
+          ]
+        });
+      }
+      if (pathOnly === 'config/') {
+        return NextResponse.json({
+          api_url: 'http://localhost:8080',
+          web_url: 'http://localhost:3000',
+          environment: 'development',
+          features: {
+            service_approvals: true,
+            ai_integration: true,
+            github_integration: false,
+            vercel_integration: false,
+            supabase_integration: false,
+            analytics: true,
+            error_reporting: true
+          },
+          services: {
+            openai: false,
+            anthropic: false,
+            github: false,
+            vercel: false,
+            supabase: false
+          }
+        });
+      }
     }
     return NextResponse.json({ error: 'BACKEND_BASE_URL is not configured. Set it in Global Settings → General.' }, { status: 500 });
   }

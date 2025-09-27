@@ -18,7 +18,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
   // Load CLI preference
   const loadPreference = useCallback(async () => {
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/cli/available`);
       if (!response.ok) throw new Error('Failed to load CLI preference');
       
@@ -38,7 +38,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
   const loadStatuses = useCallback(async () => {
     try {
       setIsLoading(true);
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/cli-status`);
       if (!response.ok) throw new Error('Failed to load CLI statuses');
       
@@ -63,7 +63,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
   // Check single CLI status
   const checkCLIStatus = useCallback(async (cliType: string) => {
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/cli-status/${cliType}`);
       if (!response.ok) throw new Error(`Failed to check ${cliType} status`);
       
@@ -89,7 +89,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
   // Update CLI preference
   const updatePreference = useCallback(async (preferredCli: string) => {
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/cli-preference`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -112,7 +112,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
   // Update model preference
   const updateModelPreference = useCallback(async (modelId: string) => {
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
       const response = await fetch(`${API_BASE}/api/chat/${projectId}/model-preference`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

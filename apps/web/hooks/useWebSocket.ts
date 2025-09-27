@@ -1,8 +1,9 @@
 /**
- * WebSocket Hook
- * Manages WebSocket connection for real-time updates
+ * WebSocket Hook (socket.io)
+ * Manages real-time updates via Socket.IO server at `/ws`
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { Message } from '@/types/chat';
 
 interface WebSocketOptions {
@@ -22,72 +23,118 @@ export function useWebSocket({
   onDisconnect,
   onError
 }: WebSocketOptions) {
-  const wsRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const connectionAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const [isConnected, setIsConnected] = useState(false);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
-    }
+    // Already connected
+    if (socketRef.current && socketRef.current.connected) return;
 
-    // Don't reconnect if we're intentionally disconnecting
-    if (!shouldReconnectRef.current) {
-      return;
-    }
+    if (!shouldReconnectRef.current) return; // Intentional disconnect
 
     try {
-      const wsUrl = process.env.NEXT_PUBLIC_WS_BASE || 'ws://localhost:8080';
-      const fullUrl = `${wsUrl}/api/chat/${projectId}`;
-      const ws = new WebSocket(fullUrl);
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+      // Convert origin to WS base for logs only
+      const url = origin.replace('http', 'ws');
 
-      ws.onopen = () => {
+      const socket = io(origin, {
+        path: '/ws',
+        transports: ['websocket'],
+        autoConnect: true,
+        reconnection: true,
+        reconnectionAttempts: 5
+      });
+
+      // On connect, join project room
+      socket.on('connect', () => {
         setIsConnected(true);
         connectionAttemptsRef.current = 0;
+        try { socket.emit('join_project', projectId); } catch {}
         onConnect?.();
-      };
+      });
 
-      ws.onmessage = (event) => {
-        try {
-          if (event.data === 'pong') {
-            return;
-          }
-          
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'message' && onMessage && data.data) {
-            onMessage(data.data);
-          } else if (data.type === 'preview_error' && onMessage) {
-            onMessage(data);
-          } else if (data.type === 'preview_success' && onMessage) {
-            onMessage(data);
-          } else if ((data.type === 'project_status' || data.type === 'status') && onStatus) {
-            onStatus('project_status', data.data || { status: data.status, message: data.message });
-          } else if (data.type === 'act_start' && onStatus) {
-            onStatus('act_start', data.data, data.data?.request_id);
-          } else if (data.type === 'chat_start' && onStatus) {
-            onStatus('chat_start', data.data, data.data?.request_id);
-          } else if (data.type === 'act_complete' && onStatus) {
-            onStatus('act_complete', data.data, data.data?.request_id);
-          } else if (data.type === 'chat_complete' && onStatus) {
-            onStatus('chat_complete', data.data, data.data?.request_id);
-          } else {
-          }
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
-        }
-      };
+      // Map server events to existing app callbacks
+      // Project status
+      socket.on('project_status', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('project_status', data);
+      });
 
-      ws.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-        console.error('❌ WebSocket readyState:', ws.readyState);
-        console.error('❌ WebSocket URL:', ws.url);
-        onError?.(new Error(`WebSocket connection error to ${ws.url}`));
-      };
+      // Message created elsewhere (optional)
+      socket.on('new_message', (payload: any) => {
+        const msg = payload?.data || payload;
+        onMessage?.(msg);
+      });
 
-      ws.onclose = () => {
+      // Chat processing lifecycle (map to chat_* for UI expectations)
+      socket.on('processing_started', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('chat_start', data, data?.request_id);
+      });
+
+      socket.on('message_chunk', (payload: any) => {
+        const data = payload?.data || payload;
+        // Stream partial content as message updates
+        onMessage?.({
+          id: data.message_id,
+          role: 'assistant',
+          content: data.content ?? data.chunk ?? '',
+          message_type: 'chat',
+          session_id: data.session_id,
+          created_at: new Date().toISOString()
+        } as any);
+      });
+
+      socket.on('message_complete', (payload: any) => {
+        const data = payload?.data || payload;
+        // Final content
+        onMessage?.({
+          id: data.message_id,
+          role: 'assistant',
+          content: data.content ?? '',
+          message_type: 'chat',
+          session_id: data.session_id,
+          created_at: new Date().toISOString()
+        } as any);
+        onStatus?.('chat_complete', data, data?.request_id);
+      });
+
+      socket.on('processing_complete', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('chat_complete', data, data?.request_id);
+      });
+
+      socket.on('processing_error', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('chat_complete', { ...data, status: 'failed' }, data?.request_id);
+      });
+
+      // Action lifecycle (map to act_*)
+      socket.on('action_started', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('act_start', data, data?.request_id);
+      });
+      socket.on('action_complete', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('act_complete', data, data?.request_id);
+      });
+      socket.on('action_error', (payload: any) => {
+        const data = payload?.data || payload;
+        onStatus?.('act_complete', { ...data, status: 'failed' }, data?.request_id);
+      });
+
+      // Generic errors
+      socket.on('connect_error', (err: any) => {
+        onError?.(new Error(`WebSocket connection error to ${url}/ws: ${err?.message || err}`));
+      });
+      socket.on('error', (err: any) => {
+        onError?.(new Error(typeof err === 'string' ? err : err?.message || 'Socket error'));
+      });
+
+      socket.on('disconnect', () => {
         setIsConnected(false);
         onDisconnect?.();
         
@@ -103,33 +150,29 @@ export function useWebSocket({
             }, delay);
           }
         }
-      };
+      });
 
-      wsRef.current = ws;
+      socketRef.current = socket;
     } catch (error) {
-      console.error('Failed to create WebSocket connection:', error);
+      console.error('Failed to create Socket.IO connection:', error);
       onError?.(error as Error);
     }
   }, [projectId, onMessage, onStatus, onConnect, onDisconnect, onError]);
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false;
-    
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    if (socketRef.current) {
+      try { socketRef.current.emit('leave_project', projectId); } catch {}
+      socketRef.current.disconnect();
+      socketRef.current = null;
     }
-    
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    
     setIsConnected(false);
-  }, []);
+  }, [projectId]);
 
   const sendMessage = useCallback((data: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('chat_message', data);
     } else {
       console.warn('WebSocket is not connected');
     }

@@ -16,7 +16,8 @@
     "express": "^4.19.2",
     "get-port": "^7.1.0",
     "http-proxy-middleware": "^3.0.0",
-    "next": "14.2.5"
+    "next": "14.2.5",
+    "socket.io": "^4.8.1"
   },
   "build": {
     "electronVersion": "30.0.0",
@@ -38,10 +39,10 @@
       { 
         "from": "../web", 
         "to": "web", 
-        "filter": ["**/*", "!.next/cache/**"]
+        "filter": ["**/*", "!.next/cache/**", "!node_modules/**"]
       },
-      { "from": "../api", "to": "api", "filter": ["**/*", "!.venv/**", "!**/__pycache__/**"] },
-      { "from": "../../assets", "to": "assets" }
+      { "from": "../../assets", "to": "assets" },
+      { "from": "../../data", "to": "data", "filter": ["cc.db"] }
     ],
     "mac": {
       "target": [

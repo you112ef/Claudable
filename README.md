@@ -151,6 +151,41 @@ Your application will be available at:
 
 **Note**: Ports are automatically detected. If the default ports are in use, the next available ports will be assigned.
 
+## Environment Variables
+
+- Only example templates are committed. Real `.env` files are git‑ignored.
+- Auto‑creation: `npm install` runs `scripts/setup-env.js` to create
+  - `./.env` with local ports and SQLite path
+  - `apps/web/.env.local` configured for same‑origin (empty `NEXT_PUBLIC_*`)
+- Secrets: configure `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`) in your shell or local `.env`. Never commit secrets.
+- Next.js fullstack (this branch): leave `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_WS_BASE` empty to use same‑origin API and Socket.IO at `/ws`.
+- Python API (main branch): set
+  - `NEXT_PUBLIC_API_BASE=http://localhost:8080`
+  - `NEXT_PUBLIC_WS_BASE=ws://localhost:8080`
+
+Convenience
+```bash
+# Regenerate env files
+npm run setup   # or: node scripts/setup-env.js
+
+# Clean and reinstall if things drift
+npm run clean && npm install
+```
+
+Fresh dev DB (default)
+- On `npm run dev`, we start from a fresh SQLite database by default. Any existing `data/cc.db` is removed and Prisma schema is applied automatically.
+- To keep your local data, set an env var before running dev:
+```bash
+export KEEP_DB=1   # or CC_KEEP_DB=1
+npm run dev
+```
+- Manual clean reset (if you disabled auto-clean):
+```bash
+npm run db:backup   # optional
+npm run db:reset    # y to confirm
+cd apps/web && npx prisma db push
+```
+
 ## Desktop App (Electron)
 
 ### Download Pre-built App

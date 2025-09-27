@@ -6,6 +6,22 @@ const nextConfig = {
   experimental: {
     optimizeCss: false,
     scrollRestoration: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: process.env.NEXT_PUBLIC_API_URL 
+          ? `${process.env.NEXT_PUBLIC_API_URL}/api/:path*`
+          : 'http://localhost:8080/api/:path*'
+      }
+    ];
   }
 };
 

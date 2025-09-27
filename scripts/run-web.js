@@ -20,7 +20,8 @@ const webProcess = spawn(
   { 
     cwd: webDir,
     stdio: 'inherit',
-    shell: isWindows
+    shell: isWindows,
+    env: { ...process.env, WEB_PORT: webPort.toString(), PORT: webPort.toString() }
   }
 );
 

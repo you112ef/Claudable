@@ -4,7 +4,8 @@
   "private": true,
   "description": "CC Lovable Development Environment",
   "workspaces": [
-    "apps/web"
+    "apps/web",
+    "apps/desktop"
   ],
   "scripts": {
     "dev": "npm run ensure:env && npm run ensure:venv && concurrently --raw \"npm run dev:api\" --prefix \"[WEB] \" \"npm run dev:web\"",
@@ -16,11 +17,15 @@
     "setup": "npm install",
     "clean": "node scripts/clean.js",
     "db:reset": "node scripts/reset-db.js",
-    "db:backup": "node scripts/backup-db.js"
+    "db:backup": "node scripts/backup-db.js",
+    "dev:desktop": "cross-env BROWSER=none concurrently --raw \"npm run dev\" \"node scripts/wait-web.js && npm --workspace apps/desktop run start\"",
+    "build:desktop": "npm --workspace apps/web run build && npm --workspace apps/desktop run dist"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "cross-env": "^7.0.3",
+    "wait-on": "^7.2.0"
   },
   "engines": {
     "node": ">=18.0.0",

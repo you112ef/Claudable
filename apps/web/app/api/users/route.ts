@@ -1,30 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import DatabaseService from '@/lib/database';
 
-// Mock users data for Vercel deployment
-const mockUsers = [
-  {
-    id: 'user-1',
-    name: 'John Doe',
-    email: 'john@example.com',
-    role: 'admin',
-    created_at: '2025-09-27T00:00:00Z',
-    last_login: '2025-09-27T00:00:00Z'
-  },
-  {
-    id: 'user-2',
-    name: 'Jane Smith',
-    email: 'jane@example.com',
-    role: 'user',
-    created_at: '2025-09-27T00:00:00Z',
-    last_login: '2025-09-27T00:00:00Z'
-  }
-];
+const db = DatabaseService.getInstance();
 
 export async function GET(request: NextRequest) {
   try {
-    // In production, this would connect to your actual database
-    // For Vercel demo, we'll return mock data
-    return NextResponse.json(mockUsers);
+    const users = await db.getUsers();
+    return NextResponse.json(users);
   } catch (error) {
     console.error('Error fetching users:', error);
     return NextResponse.json(
@@ -46,21 +28,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // In production, this would save to your actual database
-    // For Vercel demo, we'll return a success response
-    const newUser = {
-      id: `user-${Date.now()}`,
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return NextResponse.json(
+        { error: 'Invalid email format' },
+        { status: 400 }
+      );
+    }
+
+    const userId = await db.saveUser({
       name,
       email,
       role,
-      created_at: new Date().toISOString(),
-      last_login: null
-    };
+    });
 
     return NextResponse.json({
       success: true,
       message: 'User created successfully',
-      user: newUser
+      user_id: userId
     });
   } catch (error) {
     console.error('Error creating user:', error);

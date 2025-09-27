@@ -10,6 +10,7 @@
     "vercel-build": "next build"
   },
   "dependencies": {
+    "@vercel/kv": "^1.0.0",
     "clsx": "2.1.1",
     "critters": "^0.0.23",
     "framer-motion": "11.3.31",

@@ -10,7 +10,7 @@ interface APIKey {
   is_active: boolean;
   created_at: string;
   last_used: string | null;
-  usage_count: string;
+  usage_count: number;
 }
 
 interface EnvironmentStatus {
@@ -36,12 +36,11 @@ export default function APIKeysManager() {
 
   useEffect(() => {
     loadAPIKeys();
-    loadEnvironmentStatus();
   }, []);
 
   const loadAPIKeys = async () => {
     try {
-      const response = await fetch('/api/api-keys/list');
+      const response = await fetch('/api/api-keys');
       const keys = await response.json();
       setApiKeys(keys);
     } catch (error) {
@@ -65,7 +64,7 @@ export default function APIKeysManager() {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/api-keys/save', {
+      const response = await fetch('/api/api-keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -76,7 +75,7 @@ export default function APIKeysManager() {
       const result = await response.json();
 
       if (result.success) {
-        toast.success('API key saved successfully');
+        toast.success('API key saved and validated successfully');
         setNewKey({
           service_type: 'openai',
           key_name: '',
@@ -86,7 +85,7 @@ export default function APIKeysManager() {
         setShowAddForm(false);
         loadAPIKeys();
       } else {
-        toast.error(result.message);
+        toast.error(result.error || 'Failed to save API key');
       }
     } catch (error) {
       console.error('Failed to save API key:', error);
@@ -102,7 +101,7 @@ export default function APIKeysManager() {
     }
 
     try {
-      const response = await fetch(`/api/api-keys/delete/${tokenId}`, {
+      const response = await fetch(`/api/api-keys?id=${tokenId}`, {
         method: 'DELETE',
       });
 
@@ -112,7 +111,7 @@ export default function APIKeysManager() {
         toast.success('API key deleted successfully');
         loadAPIKeys();
       } else {
-        toast.error(result.message);
+        toast.error(result.error || 'Failed to delete API key');
       }
     } catch (error) {
       console.error('Failed to delete API key:', error);

@@ -11,6 +11,8 @@
     "dev": "npm run ensure:env && npm --workspace apps/web run dev",
     "dev:api": "echo 'API is now integrated into Next.js'",
     "dev:web": "npm --workspace apps/web run dev",
+    "build": "npm --workspace apps/web run build",
+    "start": "npm --workspace apps/web run start",
     "ensure:env": "node scripts/setup-env.js",
     "ensure:venv": "echo 'Python venv no longer needed with Next.js'",
     "postinstall": "npm run ensure:env && npm --workspace apps/web run prisma:generate",

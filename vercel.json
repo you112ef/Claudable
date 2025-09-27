@@ -2,11 +2,15 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "framework": "nextjs",
+  "outputDirectory": "apps/web/.next",
   "functions": {
-    "api/**": {
+    "apps/web/app/api/**": {
       "memory": 1024,
       "maxDuration": 60
     }
+  },
+  "env": {
+    "NODE_ENV": "production"
   }
 }
 

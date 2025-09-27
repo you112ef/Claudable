@@ -10,6 +10,7 @@ from app.api.chat import router as chat_router
 from app.api.tokens import router as tokens_router
 from app.api.ai import router as ai_router
 from app.api.service_approvals import router as service_approvals_router
+from app.api.config import router as config_router
 from app.api.settings import router as settings_router
 from app.api.project_services import router as project_services_router
 from app.api.github import router as github_router
@@ -83,6 +84,7 @@ app.include_router(chat_router, prefix="/api/chat")  # Unified chat API (include
 app.include_router(tokens_router)  # Service tokens API
 app.include_router(ai_router)  # AI connectivity + simple chat
 app.include_router(service_approvals_router)  # Bilateral approval system
+app.include_router(config_router)  # API configuration endpoint
 app.include_router(settings_router)  # Settings API
 app.include_router(project_services_router)  # Project services API
 app.include_router(github_router)  # GitHub integration API

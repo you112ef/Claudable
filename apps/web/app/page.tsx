@@ -1232,6 +1232,12 @@ export default function HomePage() {
               >
                 Add User
               </a>
+              <a
+                href="/api-keys"
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-full hover:opacity-90 transition-all"
+              >
+                Manage API Keys
+              </a>
               {[
                 { 
                   text: 'Landing Page',

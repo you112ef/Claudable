@@ -49,6 +49,9 @@ class SecurityConfig(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(',')]
         return v
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields
 
 
 class DatabaseConfig(BaseSettings):
@@ -61,13 +64,20 @@ class DatabaseConfig(BaseSettings):
     database_pool_timeout: int = Field(30, env="DATABASE_POOL_TIMEOUT")
     database_pool_recycle: int = Field(3600, env="DATABASE_POOL_RECYCLE")
     
+    class Config:
+        extra = "ignore"  # Ignore extra fields
+    
     # SQLite specific
     sqlite_wal_mode: bool = Field(True, env="SQLITE_WAL_MODE")
     sqlite_foreign_keys: bool = Field(True, env="SQLITE_FOREIGN_KEYS")
     
+    
     # PostgreSQL specific
     postgres_ssl_mode: str = Field("prefer", env="POSTGRES_SSL_MODE")
     postgres_application_name: str = Field("claudable-api", env="POSTGRES_APPLICATION_NAME")
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields
 
 
 class APIConfig(BaseSettings):
@@ -83,6 +93,9 @@ class APIConfig(BaseSettings):
     max_request_size: int = Field(10 * 1024 * 1024, env="MAX_REQUEST_SIZE")  # 10MB
     max_response_size: int = Field(50 * 1024 * 1024, env="MAX_RESPONSE_SIZE")  # 50MB
     request_timeout: int = Field(300, env="REQUEST_TIMEOUT")  # 5 minutes
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields
 
 
 class ExternalServicesConfig(BaseSettings):
@@ -108,6 +121,9 @@ class ExternalServicesConfig(BaseSettings):
     supabase_url: Optional[str] = Field(None, env="SUPABASE_URL")
     supabase_anon_key: Optional[str] = Field(None, env="SUPABASE_ANON_KEY")
     supabase_service_role_key: Optional[str] = Field(None, env="SUPABASE_SERVICE_ROLE_KEY")
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields
 
 
 class MonitoringConfig(BaseSettings):
@@ -127,6 +143,9 @@ class MonitoringConfig(BaseSettings):
     # Health Checks
     health_check_interval: int = Field(60, env="HEALTH_CHECK_INTERVAL")  # seconds
     health_check_timeout: int = Field(10, env="HEALTH_CHECK_TIMEOUT")  # seconds
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields
 
 
 class Settings(BaseSettings):

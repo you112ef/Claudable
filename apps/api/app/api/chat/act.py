@@ -36,8 +36,8 @@ class ImageAttachment(BaseModel):
 
 class ActRequest(BaseModel):
     instruction: str
-    conversation_id: str | None = None
-    cli_preference: str | None = None
+    conversation_id: Optional[str] = None
+    cli_preference: Optional[str] = None
     fallback_enabled: bool = True
     images: List[ImageAttachment] = []
     is_initial_prompt: bool = False

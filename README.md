@@ -151,6 +151,75 @@ Your application will be available at:
 
 **Note**: Ports are automatically detected. If the default ports are in use, the next available ports will be assigned.
 
+## Environment Variables
+
+- Only example templates are committed. Real `.env` files are git‑ignored.
+- Auto‑creation: `npm install` runs `scripts/setup-env.js` to create
+  - `./.env` with local ports and SQLite path
+  - `apps/web/.env.local` configured for same‑origin (empty `NEXT_PUBLIC_*`)
+- Secrets: configure `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`) in your shell or local `.env`. Never commit secrets.
+- Next.js fullstack (this branch): leave `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_WS_BASE` empty to use same‑origin API and Socket.IO at `/ws`.
+- Python API (main branch): set
+  - `NEXT_PUBLIC_API_BASE=http://localhost:8080`
+  - `NEXT_PUBLIC_WS_BASE=ws://localhost:8080`
+
+Convenience
+```bash
+# Regenerate env files
+npm run setup   # or: node scripts/setup-env.js
+
+# Clean and reinstall if things drift
+npm run clean && npm install
+```
+
+Fresh dev DB (default)
+- On `npm run dev`, we start from a fresh SQLite database by default. Any existing `data/cc.db` is removed and Prisma schema is applied automatically.
+- To keep your local data, set an env var before running dev:
+```bash
+export KEEP_DB=1   # or CC_KEEP_DB=1
+npm run dev
+```
+- Manual clean reset (if you disabled auto-clean):
+```bash
+npm run db:backup   # optional
+npm run db:reset    # y to confirm
+cd apps/web && npx prisma db push
+```
+
+## Desktop App (Electron)
+
+### Download Pre-built App
+
+**macOS Users:** Download the ready-to-use desktop app directly!
+
+- **Apple Silicon (M1/M2/M3):** [Download Claudable-0.1.0-arm64.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0-arm64.dmg) (292MB)
+- **Intel Mac:** [Download Claudable-0.1.0.dmg](https://github.com/opactorai/Claudable/releases/download/v0.1.0/Claudable-0.1.0.dmg) (297MB)
+
+**Installation:**
+1. Download the DMG file for your Mac type
+2. Open the DMG file
+3. Drag Claudable to your Applications folder
+4. Launch Claudable from Applications or Launchpad
+
+### Build From Source
+
+Build and distribute a desktop app that bundles the web UI and runs the local API automatically.
+
+```bash
+# Build production Next.js and package Electron app
+npm run build:desktop
+
+# Output installers
+# - macOS: apps/desktop/dist/*.dmg
+# - Windows: apps/desktop/dist/*.exe
+# - Linux: apps/desktop/dist/*.AppImage
+```
+
+Notes:
+- First launch will set up a Python virtual environment in your user data folder and install API dependencies (internet required). Subsequent launches are fast and offline.
+- The desktop app serves the UI at http://localhost:8080 and proxies /api/* to the local Python API.
+- If port 8080 is in use, close the conflicting app before launching the desktop app.
+
 ## Setup
 
 ### Manual Setup

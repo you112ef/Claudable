@@ -1,11 +1,12 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 import { AnimatePresence } from 'framer-motion';
 import { MotionDiv, MotionP } from '../lib/motion';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
-const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || 'ws://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
+const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || (typeof window !== 'undefined' ? `ws://${window.location.host}` : 'ws://localhost:3000');
 
 interface CLIOption {
   id: string;
@@ -236,85 +237,61 @@ export default function CreateProjectModal({ open, onClose, onCreated, onOpenGlo
   const selectedCLIOption = enabledCLIs.find(cli => cli.id === selectedCLI);
   const selectedModelOption = selectedCLIOption?.models.find(model => model.id === selectedModel);
 
-  // WebSocket connection for project initialization
+  // WebSocket connection for project initialization (socket.io)
   const connectToProjectWebSocket = (projectId: string) => {
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 5;
     let reconnectTimeout: NodeJS.Timeout | null = null;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 
     const connect = () => {
-      const ws = new WebSocket(`${WS_BASE}/api/chat/${projectId}`);
-      
-      ws.onopen = () => {
-        reconnectAttempts = 0; // Reset attempts on successful connection
-      };
-      
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'project_status') {
-            const { status, message } = data.data || data;
-            console.log('📊 Project status received:', status, message);
-            
-            if (message) {
-              setInitializationStep(message);
-            }
-            
-            if (status === 'active') {
-              // Project ready, close modal and navigate
-              setTimeout(() => {
-                ws.close();
-                handleInitializationComplete(projectId);
-              }, 1000);
-            } else if (status === 'failed') {
-              setInitializationStep('Project initialization failed');
-              setTimeout(() => {
-                ws.close();
-                setShowInitialization(false);
-                setInitializingProjectId(null);
-              }, 3000);
-            }
-          }
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
+      const socket: Socket = io(origin, { path: '/ws', transports: ['websocket'], reconnectionAttempts: maxReconnectAttempts });
+
+      socket.on('connect', () => {
+        reconnectAttempts = 0;
+        try { socket.emit('join_project', projectId); } catch {}
+      });
+
+      socket.on('project_status', (payload: any) => {
+        const { status, message } = payload?.data || payload || {};
+        if (message) setInitializationStep(message);
+        if (status === 'active') {
+          setTimeout(() => {
+            socket.disconnect();
+            handleInitializationComplete(projectId);
+          }, 1000);
+        } else if (status === 'failed') {
+          setInitializationStep('Project initialization failed');
+          setTimeout(() => {
+            socket.disconnect();
+            setShowInitialization(false);
+            setInitializingProjectId(null);
+          }, 3000);
         }
-      };
-      
-      ws.onclose = (event) => {
-        
-        // Only attempt reconnection if it wasn't a normal closure and we haven't exceeded max attempts
-        if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+      });
+
+      socket.on('disconnect', (reason) => {
+        if (reason !== 'io client disconnect' && reconnectAttempts < maxReconnectAttempts) {
           reconnectAttempts++;
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000); // Exponential backoff, max 10s
-          console.log(`🔄 Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-          
-          reconnectTimeout = setTimeout(() => {
-            connect();
-          }, delay);
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
+          reconnectTimeout = setTimeout(() => connect(), delay);
         } else if (reconnectAttempts >= maxReconnectAttempts) {
-          console.error('❌ Max reconnection attempts reached. Please refresh the page.');
           setInitializationStep('Connection lost. Please refresh the page.');
         }
-      };
-      
-      ws.onerror = (error) => {
-        console.error('❌ Initialization WebSocket error:', error);
-      };
+      });
 
-      return ws;
+      socket.on('connect_error', (err) => {
+        console.error('❌ Initialization WebSocket error:', err);
+      });
+
+      return socket;
     };
 
-    const ws = connect();
-    
-    // Return cleanup function
+    const socket = connect();
     return () => {
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close(1000, 'Component unmounting');
-      }
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      try { socket.emit('leave_project', projectId); } catch {}
+      socket.disconnect();
     };
   };
 

@@ -1,0 +1,98 @@
+{
+  "name": "cc-lovable-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claudable Desktop (Electron wrapper)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "get-port": "^7.1.0",
+    "http-proxy-middleware": "^3.0.0",
+    "next": "14.2.5",
+    "socket.io": "^4.8.1"
+  },
+  "build": {
+    "electronVersion": "30.0.0",
+    "appId": "ai.opactor.claudable",
+    "productName": "Claudable",
+    "copyright": "Copyright © 2025 OPACTOR",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "api-runner.js",
+      "package.json"
+    ],
+    "extraResources": [
+      { 
+        "from": "../web", 
+        "to": "web", 
+        "filter": ["**/*", "!.next/cache/**", "!node_modules/**"]
+      },
+      { "from": "../../assets", "to": "assets" },
+      { "from": "../../data", "to": "data", "filter": ["cc.db"] }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "../../assets/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": ["nsis", "zip"],
+      "icon": "../../assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": ["AppImage", "deb", "rpm"],
+      "category": "Development",
+      "icon": "../../assets"
+    }
+  }
+}

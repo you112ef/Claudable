@@ -1,0 +1,62 @@
+name: Auto Deploy to Vercel
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        # Install root dependencies
+        npm ci
+        
+        # Install web app dependencies
+        cd apps/web
+        npm ci
+        
+        # Install API dependencies
+        cd ../api
+        pip install -r requirements-vercel.txt
+        
+    - name: Install Vercel CLI
+      run: npm install -g vercel@latest
+      
+    - name: Pull Vercel Environment Information
+      run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      
+    - name: Build Project
+      run: |
+        cd apps/web
+        npm run build
+        
+    - name: Deploy Project Artifacts to Vercel
+      run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+      
+    - name: Production Deploy
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

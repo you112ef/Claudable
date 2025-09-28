@@ -32,6 +32,15 @@
       "memory": 1024,
       "maxDuration": 60
     }
+  },
+  "github": {
+    "enabled": true,
+    "autoAlias": true
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "master": true
+    }
   }
 }
-

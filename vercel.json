@@ -22,7 +22,6 @@
   ],
   "env": {
     "API_PORT": "8080",
-    "DATABASE_URL": "@database_url",
     "PROJECTS_ROOT": "/tmp/projects",
     "PREVIEW_PORT_START": "3100",
     "PREVIEW_PORT_END": "3999"
@@ -31,16 +30,6 @@
     "apps/api/app/main.py": {
       "memory": 1024,
       "maxDuration": 60
-    }
-  },
-  "github": {
-    "enabled": true,
-    "autoAlias": true
-  },
-  "git": {
-    "deploymentEnabled": {
-      "main": true,
-      "master": true
     }
   }
 }
